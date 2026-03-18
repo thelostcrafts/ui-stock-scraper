@@ -31,15 +31,28 @@ from typing import Optional
 
 BASE_URL = "https://store.ui.com"
 
+# Region-to-subdomain mapping. Non-US regions use their own subdomain.
+REGION_HOSTS = {
+    "us/en": "store.ui.com",
+    "eu/en": "eu.store.ui.com",
+    "uk/en": "uk.store.ui.com",
+    "ca/en": "ca.store.ui.com",
+    "jp/ja": "jp.store.ui.com",
+    "mx/es": "mx.store.ui.com",
+    "br/pt": "br.store.ui.com",
+    "in/en": "in.store.ui.com",
+    "sg/en": "sg.store.ui.com",
+    "me/en": "me.store.ui.com",
+    "za/en": "za.store.ui.com",
+    "tw/en": "tw.store.ui.com",
+    "cn/en": "cn.store.ui.com",
+}
+
 # Regions to monitor. Add/remove as needed.
 # Set via env var UI_REGIONS (comma-separated) or default to US only.
 import os
 DEFAULT_REGIONS = ["us/en"]
-ALL_KNOWN_REGIONS = [
-    "us/en", "eu/en", "uk/en", "ca/en", "jp/ja",
-    "mx/es", "br/pt", "in/en", "sg/en",
-    "me/en", "za/en", "tw/en", "cn/en", "ph/en",
-]
+ALL_KNOWN_REGIONS = list(REGION_HOSTS.keys())
 REGIONS = os.environ.get("UI_REGIONS", "").split(",") if os.environ.get("UI_REGIONS") else DEFAULT_REGIONS
 REGIONS = [r.strip() for r in REGIONS if r.strip()]
 
@@ -332,7 +345,8 @@ def fetch_category(
     region: str = "us/en",
 ) -> dict:
     """Fetch a category's JSON data from the _next/data API with retry/backoff."""
-    url = f"{BASE_URL}/_next/data/{build_id}/{region}/category/{category}.json"
+    host = REGION_HOSTS.get(region, "store.ui.com")
+    url = f"https://{host}/_next/data/{build_id}/{region}/category/{category}.json"
 
     for attempt in range(MAX_RETRIES):
         try:

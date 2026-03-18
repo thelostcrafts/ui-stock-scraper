@@ -596,6 +596,7 @@ HTML_PAGE = """<!DOCTYPE html>
   .badge.available { background: #052e16; color: var(--green); }
   .badge.soldout { background: #2a0a0a; color: var(--red); }
   .badge.comingsoon { background: #1a1500; color: var(--yellow); }
+  .badge.regionna { background: #1a1a2e; color: #7c8ba5; }
 
   .event-type { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
   .event-type.status_change { background: #1e1b4b; color: #818cf8; }
@@ -707,6 +708,7 @@ HTML_PAGE = """<!DOCTYPE html>
       <option value="Available">Available</option>
       <option value="SoldOut">Sold Out</option>
       <option value="ComingSoon">Coming Soon</option>
+      <option value="RegionNotAvailable">Region N/A</option>
     </select>
     <select id="filter-category">
       <option value="">All categories</option>
@@ -841,8 +843,8 @@ function fmt(cents) {
 }
 
 function badge(status) {
-  const cls = status === 'Available' ? 'available' : status === 'SoldOut' ? 'soldout' : 'comingsoon';
-  const label = status === 'SoldOut' ? 'Sold Out' : status === 'ComingSoon' ? 'Coming Soon' : status;
+  const cls = status === 'Available' ? 'available' : status === 'SoldOut' ? 'soldout' : status === 'RegionNotAvailable' ? 'regionna' : 'comingsoon';
+  const label = status === 'SoldOut' ? 'Sold Out' : status === 'ComingSoon' ? 'Coming Soon' : status === 'RegionNotAvailable' ? 'Region N/A' : status;
   return `<span class="badge ${cls}">${label}</span>`;
 }
 
@@ -1032,8 +1034,8 @@ async function showProductDetail(sku) {
   const p = data.product;
   if (!p) return;
 
-  const statusDot = p.status === 'Available' ? 'avail' : p.status === 'SoldOut' ? 'sold' : 'soon';
-  const statusLabel = p.status === 'SoldOut' ? 'Sold Out' : p.status === 'ComingSoon' ? 'Coming Soon' : 'Available';
+  const statusDot = p.status === 'Available' ? 'avail' : p.status === 'SoldOut' ? 'sold' : p.status === 'RegionNotAvailable' ? 'regionna' : 'soon';
+  const statusLabel = p.status === 'SoldOut' ? 'Sold Out' : p.status === 'ComingSoon' ? 'Coming Soon' : p.status === 'RegionNotAvailable' ? 'Region N/A' : p.status;
 
   let html = `
     ${p.thumbnail ? `<img class="modal-thumb" src="${esc(p.thumbnail)}" alt="${esc(p.name)}">` : ''}
