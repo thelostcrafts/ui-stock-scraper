@@ -2,22 +2,22 @@
 
 ## Deployment
 
-This project runs as a launchd service on the **Mac Mini at 192.168.1.10** (SSH key access, user `abrunetto`).
+This project runs as a launchd service on the **Mac Mini at 192.168.1.10** (SSH key access).
 
 **Any code changes to `monitor.py` or `dashboard.py` must be pushed to the Mac Mini after editing:**
 
 ```bash
 # Push code (excludes data/ to avoid overwriting live DB)
-rsync -avz --exclude='__pycache__' --exclude='data/' /Users/abrunetto/Projects/ui-stock-scraper/ 192.168.1.10:~/Projects/ui-stock-scraper/
+rsync -avz --exclude='__pycache__' --exclude='data/' ~/Projects/ui-stock-scraper/ 192.168.1.10:~/Projects/ui-stock-scraper/
 
 # Restart services after code changes
-ssh 192.168.1.10 "launchctl unload ~/Library/LaunchAgents/com.abrunetto.ui-store-dashboard.plist && launchctl load ~/Library/LaunchAgents/com.abrunetto.ui-store-dashboard.plist"
+ssh 192.168.1.10 "launchctl unload ~/Library/LaunchAgents/com.thelostcrafts.ui-store-dashboard.plist && launchctl load ~/Library/LaunchAgents/com.thelostcrafts.ui-store-dashboard.plist"
 # Monitor doesn't need restart — it picks up changes on next 30-min run
 ```
 
 **Services:**
-- `com.abrunetto.ui-store-monitor` — runs every 30 min, scrapes store.ui.com
-- `com.abrunetto.ui-store-dashboard` — persistent HTTP server on port 8080 (KeepAlive)
+- `com.thelostcrafts.ui-store-monitor` — runs every 30 min, scrapes store.ui.com
+- `com.thelostcrafts.ui-store-dashboard` — persistent HTTP server on port 8080 (KeepAlive)
 
 **Dashboard:** `http://192.168.1.10:8080`
 

@@ -2,7 +2,7 @@
 # Wrapper script for the UI Store monitor
 # Called by launchd every 30 minutes
 
-cd /Users/abrunetto/Projects/ui-stock-scraper
+cd "$HOME/Projects/ui-stock-scraper"
 
 # Log file with rotation (keep last 50 runs)
 LOG_DIR="data/logs"

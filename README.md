@@ -134,20 +134,20 @@ The project is designed to run unattended on a Mac Mini as a launchd service.
 
 ```bash
 # Copy the plist files to LaunchAgents
-cp com.abrunetto.ui-store-monitor.plist ~/Library/LaunchAgents/
-cp com.abrunetto.ui-store-dashboard.plist ~/Library/LaunchAgents/
+cp com.thelostcrafts.ui-store-monitor.plist ~/Library/LaunchAgents/
+cp com.thelostcrafts.ui-store-dashboard.plist ~/Library/LaunchAgents/
 
 # Load services (starts immediately + on boot)
-launchctl load ~/Library/LaunchAgents/com.abrunetto.ui-store-monitor.plist
-launchctl load ~/Library/LaunchAgents/com.abrunetto.ui-store-dashboard.plist
+launchctl load ~/Library/LaunchAgents/com.thelostcrafts.ui-store-monitor.plist
+launchctl load ~/Library/LaunchAgents/com.thelostcrafts.ui-store-dashboard.plist
 ```
 
 ### Service Details
 
 | Service | Schedule | Behavior |
 |---------|----------|----------|
-| `com.abrunetto.ui-store-monitor` | Every 15 minutes | Scrapes store, updates DB, auto-starts on boot |
-| `com.abrunetto.ui-store-dashboard` | Continuous | HTTP server on port 8080, auto-restarts on crash |
+| `com.thelostcrafts.ui-store-monitor` | Every 15 minutes | Scrapes store, updates DB, auto-starts on boot |
+| `com.thelostcrafts.ui-store-dashboard` | Continuous | HTTP server on port 8080, auto-restarts on crash |
 
 ### Manage Services
 
@@ -156,12 +156,12 @@ launchctl load ~/Library/LaunchAgents/com.abrunetto.ui-store-dashboard.plist
 launchctl list | grep ui-store
 
 # Stop
-launchctl unload ~/Library/LaunchAgents/com.abrunetto.ui-store-monitor.plist
-launchctl unload ~/Library/LaunchAgents/com.abrunetto.ui-store-dashboard.plist
+launchctl unload ~/Library/LaunchAgents/com.thelostcrafts.ui-store-monitor.plist
+launchctl unload ~/Library/LaunchAgents/com.thelostcrafts.ui-store-dashboard.plist
 
 # Start
-launchctl load ~/Library/LaunchAgents/com.abrunetto.ui-store-monitor.plist
-launchctl load ~/Library/LaunchAgents/com.abrunetto.ui-store-dashboard.plist
+launchctl load ~/Library/LaunchAgents/com.thelostcrafts.ui-store-monitor.plist
+launchctl load ~/Library/LaunchAgents/com.thelostcrafts.ui-store-dashboard.plist
 
 # View logs
 tail -50 ~/Projects/ui-stock-scraper/data/logs/monitor.log
