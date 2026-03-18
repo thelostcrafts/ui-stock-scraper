@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.DS_Store
+data/inventory.db
+data/inventory.db-shm
+data/inventory.db-wal
+data/latest_snapshot.json
+data/content_hashes.json
+data/build_id.txt
+data/backoff_state.json
+data/changes/
+data/logs/
+.env
+ui_store_recon_report.json
