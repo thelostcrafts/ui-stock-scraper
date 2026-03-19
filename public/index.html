@@ -462,7 +462,7 @@ async function loadStats() {
   const data = await fetch('/api/stats').then(r => r.json());
   const p = data.products;
   $('#stats').innerHTML = `
-    <div class="stat"><div class="label">Total SKUs</div><div class="value">${p.total}</div></div>
+    <div class="stat"><div class="label">Total Regional SKUs</div><div class="value">${p.total}</div></div>
     <div class="stat"><div class="label">Available</div><div class="value green">${p.available}</div></div>
     <div class="stat"><div class="label">Sold Out</div><div class="value red">${p.sold_out}</div></div>
     <div class="stat"><div class="label">Coming Soon</div><div class="value yellow">${p.coming_soon}</div></div>
@@ -1386,7 +1386,7 @@ async function loadAnalytics() {
       <div style="display:flex;gap:24px;margin-bottom:12px;flex-wrap:wrap;">
         <div><span style="font-size:28px;font-weight:700;">${c.unique_products}</span><span style="color:var(--text2);font-size:12px;margin-left:6px;">unique products</span></div>
         <div><span style="font-size:28px;font-weight:700;">${c.unique_skus}</span><span style="color:var(--text2);font-size:12px;margin-left:6px;">unique SKUs</span></div>
-        <div><span style="font-size:28px;font-weight:700;">${c.total_skus}</span><span style="color:var(--text2);font-size:12px;margin-left:6px;">total SKU×region</span></div>
+        <div><span style="font-size:28px;font-weight:700;">${c.total_skus}</span><span style="color:var(--text2);font-size:12px;margin-left:6px;">total regional SKUs</span></div>
         <div><span style="font-size:28px;font-weight:700;">${c.regions}</span><span style="color:var(--text2);font-size:12px;margin-left:6px;">regions</span></div>
       </div>`;
     if (catalogData.history && catalogData.history.length > 1) {
