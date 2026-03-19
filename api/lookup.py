@@ -125,6 +125,7 @@ class handler(BaseHTTPRequestHandler):
                         FROM genuine_new
                         WHERE slug IS NOT NULL
                         GROUP BY slug
+                        HAVING BOOL_OR(region IN ('us/en','eu/en','uk/en','ca/en'))
                     )
                     SELECT DISTINCT ON (b.slug)
                         b.slug, b.first_detected, b.regions,
