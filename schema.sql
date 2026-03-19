@@ -70,6 +70,17 @@ CREATE INDEX IF NOT EXISTS idx_ph_sku ON price_history(sku);
 CREATE INDEX IF NOT EXISTS idx_ph_ts ON price_history(timestamp);
 CREATE INDEX IF NOT EXISTS idx_ph_region ON price_history(region);
 
+-- Catalog metrics: track unique SKU/product counts over time
+CREATE TABLE IF NOT EXISTS catalog_metrics (
+    id              SERIAL PRIMARY KEY,
+    timestamp       TEXT NOT NULL,
+    total_skus      INTEGER NOT NULL,
+    unique_skus     INTEGER NOT NULL,
+    unique_products INTEGER NOT NULL,
+    regions         INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cm_ts ON catalog_metrics(timestamp);
+
 -- Monitor state: replaces JSON state files (content_hashes, build_id, backoff)
 CREATE TABLE IF NOT EXISTS monitor_state (
     key         TEXT PRIMARY KEY,

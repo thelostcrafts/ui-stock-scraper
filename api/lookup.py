@@ -50,6 +50,20 @@ class handler(BaseHTTPRequestHandler):
                 'SELECT * FROM scans ORDER BY timestamp DESC LIMIT %s',
                 (limit,),
             )
+        elif endpoint == 'catalog-metrics':
+            metrics = query_db("""
+                SELECT timestamp, total_skus, unique_skus, unique_products, regions
+                FROM catalog_metrics
+                ORDER BY timestamp ASC
+            """)
+            current = query_db("""
+                SELECT COUNT(*) as total_skus,
+                       COUNT(DISTINCT sku) as unique_skus,
+                       COUNT(DISTINCT name) as unique_products,
+                       COUNT(DISTINCT region) as regions
+                FROM products
+            """)[0]
+            result = {"current": current, "history": metrics}
         else:
             self.send_response(404)
             self.send_header('Content-Type', 'application/json')

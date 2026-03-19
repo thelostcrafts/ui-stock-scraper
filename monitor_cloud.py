@@ -207,6 +207,24 @@ def db_record_scan(conn, now: str, build_id: str,
     conn.commit()
 
 
+def db_record_catalog_metrics(conn, now: str):
+    """Record catalog-wide unique SKU and product counts."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT COUNT(*) as total_skus,
+                   COUNT(DISTINCT sku) as unique_skus,
+                   COUNT(DISTINCT name) as unique_products,
+                   COUNT(DISTINCT region) as regions
+            FROM products
+        """)
+        r = cur.fetchone()
+        cur.execute("""
+            INSERT INTO catalog_metrics (timestamp, total_skus, unique_skus, unique_products, regions)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (now, r[0], r[1], r[2], r[3]))
+    conn.commit()
+
+
 # ─── Adaptive Backoff ───────────────────────────────────────────────────────
 
 def load_backoff() -> dict:
@@ -636,6 +654,7 @@ def main():
 
             db_record_scan(conn, ts, build_id, total_skus,
                            status_counts, stats)
+            db_record_catalog_metrics(conn, ts)
             log("Database updated.")
         finally:
             conn.close()
