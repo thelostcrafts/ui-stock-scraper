@@ -182,6 +182,14 @@
   <div id="hot-items-list" style="display:flex; gap:10px; overflow-x:auto; padding-bottom:8px;"></div>
 </div>
 
+<div id="new-releases-section" style="display:none; padding:0 24px 12px;">
+  <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+    <span style="font-size:14px; font-weight:600;">New Releases</span>
+    <span style="font-size:11px; color:var(--text2);">Products added to the store in the last 14 days</span>
+  </div>
+  <div id="new-releases-list" style="display:flex; gap:10px; overflow-x:auto; padding-bottom:8px;"></div>
+</div>
+
 <div class="tabs">
   <button class="tab active" data-panel="products">Products</button>
   <button class="tab" data-panel="sold-out">Sold Out</button>
@@ -1544,9 +1552,37 @@ async function loadHotItems() {
   }).join('');
 }
 
+async function loadNewReleases() {
+  const items = await fetch('/api/new-releases').then(r => r.json());
+  const section = $('#new-releases-section');
+  const list = $('#new-releases-list');
+  if (!items.length) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = 'block';
+  list.innerHTML = items.map(item => {
+    const statusDot = item.status === 'Available' ? 'avail' : item.status === 'SoldOut' ? 'sold' : 'soon';
+    const statusLabel = item.status === 'ComingSoon' ? 'Coming Soon' : item.status;
+    const regions = item.regions || [];
+    const regionStr = regions.length > 1
+      ? `${regions.length} regions`
+      : regions[0] || '';
+    return `<div class="hot-card" onclick="showProductDetail('${esc(item.sku)}', '${esc(regions[0] || 'us/en')}')">
+      ${item.thumbnail ? `<img src="${esc(item.thumbnail)}" alt="${esc(item.name)}">` : ''}
+      <div class="hc-name" title="${esc(item.name)}">${esc(item.name)}</div>
+      <div class="hc-sku">${esc(item.sku)} · <span class="status-dot ${statusDot}"></span></div>
+      <div class="hc-stat"><span>Status</span><span class="val">${statusLabel}</span></div>
+      <div class="hc-stat"><span>Price</span><span class="val">${esc(item.price || '')}</span></div>
+      <div class="hc-stat"><span>Detected</span><span class="val">${timeAgo(item.first_detected)}</span></div>
+      <div class="hc-stat"><span>Regions</span><span class="val">${regionStr}</span></div>
+    </div>`;
+  }).join('');
+}
+
 // Auto-refresh every 60 seconds
 async function refreshAll() {
-  const loaders = [loadStats, loadProducts, loadEvents, loadSoldOut, loadCategories, loadWatchlist, loadHotItems, loadAnalytics];
+  const loaders = [loadStats, loadProducts, loadEvents, loadSoldOut, loadCategories, loadWatchlist, loadHotItems, loadNewReleases, loadAnalytics];
   await Promise.allSettled(loaders.map(fn => fn().catch(() => {})));
 }
 setInterval(refreshAll, 60000);
@@ -1713,6 +1749,7 @@ loadRegionFilter();
 loadWatchlist();
 loadAnalytics();
 loadHotItems();
+loadNewReleases();
 </script>
 </body>
 </html>

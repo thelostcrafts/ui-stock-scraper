@@ -99,6 +99,36 @@ class handler(BaseHTTPRequestHandler):
                     GROUP BY region
                     ORDER BY sold_out DESC
                 """)
+            elif endpoint == 'new-releases':
+                result = query_db("""
+                    WITH batch_sizes AS (
+                        SELECT timestamp, region, COUNT(*) as batch_size
+                        FROM events
+                        WHERE event_type = 'new_product'
+                        GROUP BY timestamp, region
+                    ),
+                    genuine_new AS (
+                        SELECT e.timestamp, e.sku, e.region, e.name, e.new_value as price, e.details,
+                               p.status, p.thumbnail, p.slug, p.category
+                        FROM events e
+                        JOIN batch_sizes b ON e.timestamp = b.timestamp AND e.region = b.region
+                        LEFT JOIN products p ON e.sku = p.sku AND e.region = p.region
+                        WHERE e.event_type = 'new_product'
+                          AND b.batch_size < 10
+                          AND e.timestamp > NOW() - INTERVAL '14 days'
+                    )
+                    SELECT DISTINCT ON (name)
+                        name, slug, thumbnail, category, status,
+                        MIN(timestamp) as first_detected,
+                        price,
+                        sku,
+                        ARRAY_AGG(DISTINCT region) as regions
+                    FROM genuine_new
+                    GROUP BY name, slug, thumbnail, category, status, price, sku
+                    ORDER BY name, first_detected DESC
+                """)
+                # Re-sort by detection time (newest first)
+                result.sort(key=lambda x: x.get('first_detected', ''), reverse=True)
             elif endpoint == 'scans':
                 limit = int(params.get('limit', ['200'])[0])
                 result = query_db(

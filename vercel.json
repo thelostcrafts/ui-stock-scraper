@@ -16,6 +16,7 @@
     { "source": "/api/log-access", "destination": "/api/lookup?endpoint=log-access" },
     { "source": "/api/error-logs", "destination": "/api/lookup?endpoint=error-logs" },
     { "source": "/api/log-error", "destination": "/api/lookup?endpoint=log-error" },
+    { "source": "/api/new-releases", "destination": "/api/lookup?endpoint=new-releases" },
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
