@@ -280,6 +280,12 @@
 </div>
 
 <div id="analytics" class="panel">
+  <div class="controls">
+    <label style="font-size:12px;color:var(--text2)">Region:</label>
+    <select id="analytics-region" style="width:auto">
+      <option value="us/en">🇺🇸 us/en (USD)</option>
+    </select>
+  </div>
   <div class="analytics-grid" id="analytics-content">
     <div class="empty">Loading analytics...</div>
   </div>
@@ -1209,10 +1215,12 @@ function buildRegionStockChart(regions, mode) {
 
 // Analytics
 async function loadAnalytics() {
+  const selRegion = $('#analytics-region') ? $('#analytics-region').value : 'us/en';
   const [data, regionStock] = await Promise.all([
-    fetch('/api/price-analytics').then(r => r.json()),
+    fetch('/api/price-analytics?region=' + encodeURIComponent(selRegion)).then(r => r.json()),
     fetch('/api/region-stock').then(r => r.json()),
   ]);
+  const cur = data.currency || 'USD';
   let html = '';
 
   // Region stock breakdown chart
@@ -1236,8 +1244,8 @@ async function loadAnalytics() {
   data.avg_by_category.forEach(c => {
     html += `<tr>
       <td>${esc(c.category.replace('all-',''))}</td>
-      <td class="price">${fmt(c.avg_price)} avg</td>
-      <td class="price">${fmt(c.min_price)} – ${fmt(c.max_price)}</td>
+      <td class="price">${fmt(c.avg_price, cur)} avg</td>
+      <td class="price">${fmt(c.min_price, cur)} – ${fmt(c.max_price, cur)}</td>
       <td>${c.count} SKUs</td>
     </tr>`;
   });
@@ -1275,7 +1283,7 @@ async function loadAnalytics() {
         <td><strong>${esc(c.sku)}</strong></td>
         <td>${esc(c.name)}</td>
         <td>${esc(c.old_value)} → ${esc(c.new_value)}</td>
-        <td class="${cls}">${arrow} ${c.delta_cents ? fmt(Math.abs(c.delta_cents)) : ''}</td>
+        <td class="${cls}">${arrow} ${c.delta_cents ? fmt(Math.abs(c.delta_cents), cur) : ''}</td>
       </tr>`;
     });
     html += '</table>';
@@ -1294,7 +1302,7 @@ async function loadAnalytics() {
         <td><strong>${esc(c.sku)}</strong></td>
         <td>${esc(c.name)}</td>
         <td>${esc(c.old_value)} → ${esc(c.new_value)}</td>
-        <td class="highlight">↓ ${c.delta_cents ? fmt(Math.abs(c.delta_cents)) : ''}</td>
+        <td class="highlight">↓ ${c.delta_cents ? fmt(Math.abs(c.delta_cents), cur) : ''}</td>
       </tr>`;
     });
     html += '</table>';
@@ -1390,6 +1398,20 @@ async function loadRegionFilter() {
       sel.appendChild(opt);
     });
   });
+
+  // Analytics region selector (no "All" option — must pick a region for prices to make sense)
+  const aSel = $('#analytics-region');
+  if (aSel) {
+    aSel.innerHTML = '';
+    regions.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.region;
+      opt.textContent = regionFlag(r.region) + ' ' + r.region + ' (' + r.currency + ')';
+      if (r.region === 'us/en') opt.selected = true;
+      aSel.appendChild(opt);
+    });
+    aSel.addEventListener('change', () => loadAnalytics());
+  }
 }
 
 // Init
