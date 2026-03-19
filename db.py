@@ -81,3 +81,16 @@ def execute_many_db(sql, params_list):
             conn.commit()
     finally:
         conn.close()
+
+
+def log_error(source, message, traceback_str=None, context=None, level='error'):
+    # type: (str, str, Optional[str], Optional[str], str) -> None
+    """Log an error to the error_log table. Fails silently to avoid cascading."""
+    try:
+        now = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+        execute_db(
+            "INSERT INTO error_log (timestamp, source, level, message, traceback, context) VALUES (%s, %s, %s, %s, %s, %s)",
+            (now, source, level, message, traceback_str, context),
+        )
+    except Exception:
+        pass

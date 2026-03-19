@@ -188,6 +188,7 @@
   <button class="tab" data-panel="analytics">Analytics</button>
   <button class="tab" data-panel="watchlist">Watchlist</button>
   <button class="tab" data-panel="categories">Categories</button>
+  <button class="tab" data-panel="access-logs">Logs</button>
 </div>
 
 <div id="products" class="panel active">
@@ -283,7 +284,7 @@
 <div id="analytics" class="panel">
   <div class="controls">
     <label style="font-size:12px;color:var(--text2)">Region:</label>
-    <select id="analytics-region" style="width:auto">
+    <select id="analytics-region" style="width:auto" onchange="loadAnalytics()">
       <option value="us/en">🇺🇸 us/en (USD)</option>
     </select>
   </div>
@@ -324,6 +325,71 @@
   <div class="cat-grid" id="cat-grid"></div>
 </div>
 
+<div id="access-logs" class="panel">
+  <div style="display:flex;gap:8px;padding:12px 24px 0;">
+    <button class="tw-btn active" data-logpanel="access-log-panel" onclick="switchLogPanel(this)">Access Logs</button>
+    <button class="tw-btn" data-logpanel="error-log-panel" onclick="switchLogPanel(this)">Error Logs</button>
+  </div>
+  <div id="access-log-panel">
+    <div class="controls">
+      <select id="filter-log-type">
+        <option value="all">All Requests</option>
+        <option value="pages">Pages Only</option>
+        <option value="api">API Only</option>
+      </select>
+      <button id="log-refresh-btn" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 14px;font-family:var(--font);font-size:12px;cursor:pointer;">Refresh</button>
+      <span id="log-count" style="color:var(--text2);font-size:11px;margin-left:8px"></span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>IP</th>
+            <th>Location</th>
+            <th>Method</th>
+            <th>Path</th>
+            <th>Status</th>
+            <th>User Agent</th>
+          </tr>
+        </thead>
+        <tbody id="log-body"></tbody>
+      </table>
+    </div>
+  </div>
+  <div id="error-log-panel" style="display:none">
+    <div class="controls">
+      <select id="filter-error-level">
+        <option value="">All Levels</option>
+        <option value="error">Errors</option>
+        <option value="warning">Warnings</option>
+      </select>
+      <select id="filter-error-source">
+        <option value="">All Sources</option>
+        <option value="api/">API</option>
+        <option value="monitor">Monitor</option>
+        <option value="frontend">Frontend</option>
+      </select>
+      <button id="error-refresh-btn" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 14px;font-family:var(--font);font-size:12px;cursor:pointer;">Refresh</button>
+      <span id="error-count" style="color:var(--text2);font-size:11px;margin-left:8px"></span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Level</th>
+            <th>Source</th>
+            <th>Message</th>
+            <th>Details</th>
+          </tr>
+        </thead>
+        <tbody id="error-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="modal-bg">
   <div class="modal">
     <div class="modal-inner">
@@ -348,6 +414,7 @@ const tabLoaders = {
   'analytics': loadAnalytics,
   'watchlist': loadWatchlist,
   'categories': loadCategories,
+  'access-logs': () => { if ($('#error-log-panel').style.display !== 'none') loadErrorLogs(); else loadAccessLogs(); },
 };
 $$('.tab').forEach(t => t.addEventListener('click', () => {
   $$('.tab').forEach(x => x.classList.remove('active'));
@@ -1293,11 +1360,16 @@ function buildRegionStockChart(regions, mode) {
 // Analytics
 async function loadAnalytics() {
   const selRegion = $('#analytics-region') ? $('#analytics-region').value : 'us/en';
-  const [data, regionStock, catalogData] = await Promise.all([
+  $('#analytics-content').innerHTML = '<div class="empty">Loading analytics...</div>';
+  const results = await Promise.allSettled([
     fetch('/api/price-analytics?region=' + encodeURIComponent(selRegion)).then(r => r.json()),
     fetch('/api/region-stock').then(r => r.json()),
     fetch('/api/catalog-metrics').then(r => r.json()),
   ]);
+  const data = results[0].status === 'fulfilled' ? results[0].value : null;
+  const regionStock = results[1].status === 'fulfilled' ? results[1].value : [];
+  const catalogData = results[2].status === 'fulfilled' ? results[2].value : null;
+  if (!data) { $('#analytics-content').innerHTML = '<div class="empty">Failed to load analytics</div>'; return; }
   const cur = data.currency || 'USD';
   let html = '';
 
@@ -1503,6 +1575,121 @@ async function loadRegionFilter() {
     aSel.addEventListener('change', () => loadAnalytics());
   }
 }
+
+// Access Logs
+async function loadAccessLogs() {
+  const logs = await fetch('/api/access-logs?limit=500').then(r => r.json());
+  const filter = $('#filter-log-type');
+  const filterVal = filter ? filter.value : 'all';
+  const filtered = logs.filter(l => {
+    if (filterVal === 'pages') return !l.path.startsWith('/api/');
+    if (filterVal === 'api') return l.path.startsWith('/api/');
+    return true;
+  });
+  $('#log-count').textContent = `${filtered.length} entries`;
+  $('#log-body').innerHTML = filtered.map(l => {
+    const statusCls = l.status_code >= 400 ? 'drop' : (l.status_code >= 300 ? '' : 'highlight');
+    const ua = l.user_agent || '';
+    const shortUA = ua.length > 60 ? ua.substring(0, 60) + '...' : ua;
+    const loc = [l.city, l.region, l.country].filter(Boolean).join(', ') || '—';
+    return `<tr>
+      <td>${fmtDate(l.timestamp)}</td>
+      <td>${esc(l.remote_ip)}</td>
+      <td>${esc(loc)}</td>
+      <td>${esc(l.method)}</td>
+      <td>${esc(l.path)}</td>
+      <td class="${statusCls}">${l.status_code}</td>
+      <td title="${esc(ua)}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(shortUA)}</td>
+    </tr>`;
+  }).join('');
+}
+$('#filter-log-type').addEventListener('change', () => loadAccessLogs());
+$('#log-refresh-btn').addEventListener('click', () => loadAccessLogs());
+
+// Error Logs
+async function loadErrorLogs() {
+  const level = $('#filter-error-level') ? $('#filter-error-level').value : '';
+  const source = $('#filter-error-source') ? $('#filter-error-source').value : '';
+  let url = '/api/error-logs?limit=200';
+  if (level) url += '&level=' + encodeURIComponent(level);
+  if (source) url += '&source=' + encodeURIComponent(source);
+  const logs = await fetch(url).then(r => r.json());
+  $('#error-count').textContent = `${logs.length} entries`;
+  $('#error-body').innerHTML = logs.map(l => {
+    const levelCls = l.level === 'error' ? 'drop' : (l.level === 'warning' ? '' : '');
+    const tb = l.traceback || '';
+    const shortTb = tb.length > 80 ? tb.substring(tb.length - 80) : tb;
+    return `<tr>
+      <td>${fmtDate(l.timestamp)}</td>
+      <td class="${levelCls}" style="font-weight:600;text-transform:uppercase;font-size:10px">${esc(l.level)}</td>
+      <td>${esc(l.source)}</td>
+      <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(l.message)}">${esc(l.message)}</td>
+      <td><button onclick="showErrorDetail(${l.id})" style="background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;font-family:var(--font)">View</button></td>
+    </tr>`;
+  }).join('');
+  // Store for detail view
+  window._errorLogs = logs;
+}
+function showErrorDetail(id) {
+  const log = (window._errorLogs || []).find(l => l.id === id);
+  if (!log) return;
+  const html = `
+    <h3 style="margin-top:0">Error Detail</h3>
+    <div style="display:grid;grid-template-columns:80px 1fr;gap:6px 12px;font-size:12px;margin-bottom:16px">
+      <span style="color:var(--text2)">Time</span><span>${fmtDate(log.timestamp)}</span>
+      <span style="color:var(--text2)">Level</span><span style="text-transform:uppercase;font-weight:600;color:${log.level==='error'?'var(--red)':'var(--yellow)'}">${esc(log.level)}</span>
+      <span style="color:var(--text2)">Source</span><span>${esc(log.source)}</span>
+      <span style="color:var(--text2)">Message</span><span>${esc(log.message)}</span>
+      ${log.context ? `<span style="color:var(--text2)">Context</span><span>${esc(log.context)}</span>` : ''}
+    </div>
+    ${log.traceback ? `<h4 style="margin-bottom:6px">Traceback</h4><pre style="background:var(--bg3);padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;max-height:400px;overflow-y:auto">${esc(log.traceback)}</pre>` : ''}
+  `;
+  $('#modal-content').innerHTML = html;
+  $('#modal-bg').classList.add('open');
+}
+$('#filter-error-level').addEventListener('change', () => loadErrorLogs());
+$('#filter-error-source').addEventListener('change', () => loadErrorLogs());
+$('#error-refresh-btn').addEventListener('click', () => loadErrorLogs());
+
+// Log panel sub-tabs
+function switchLogPanel(btn) {
+  const target = btn.dataset.logpanel;
+  document.querySelectorAll('#access-logs [data-logpanel]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  $('#access-log-panel').style.display = target === 'access-log-panel' ? '' : 'none';
+  $('#error-log-panel').style.display = target === 'error-log-panel' ? '' : 'none';
+  if (target === 'error-log-panel') loadErrorLogs();
+  if (target === 'access-log-panel') loadAccessLogs();
+}
+
+// Capture frontend JS errors
+window.onerror = function(msg, url, line, col, err) {
+  const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+  fetch('/api/log-error', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({timestamp: ts, source: 'frontend', level: 'error', message: msg, traceback: (err && err.stack) || (url + ':' + line + ':' + col), context: navigator.userAgent}),
+  }).catch(() => {});
+};
+window.addEventListener('unhandledrejection', function(e) {
+  const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+  fetch('/api/log-error', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({timestamp: ts, source: 'frontend', level: 'error', message: String(e.reason), traceback: (e.reason && e.reason.stack) || '', context: navigator.userAgent}),
+  }).catch(() => {});
+});
+
+// Log page view on load
+function logPageView(path) {
+  const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+  fetch('/api/log-access', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({timestamp: ts, method: 'GET', path: path || '/', status_code: 200, user_agent: navigator.userAgent}),
+  }).catch(() => {});
+}
+logPageView(location.pathname);
 
 // Init
 loadStats();

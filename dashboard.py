@@ -22,6 +22,25 @@ DB_FILE = Path(__file__).parent / "data" / "inventory.db"
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
 
 
+def ensure_access_log_table():
+    """Create the access_log table if it doesn't exist."""
+    conn = sqlite3.connect(str(DB_FILE))
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS access_log (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp   TEXT NOT NULL,
+            remote_ip   TEXT NOT NULL,
+            method      TEXT NOT NULL,
+            path        TEXT NOT NULL,
+            status_code INTEGER NOT NULL,
+            user_agent  TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_al_ts ON access_log(timestamp)")
+    conn.commit()
+    conn.close()
+
+
 def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(str(DB_FILE))
     conn.row_factory = sqlite3.Row
@@ -39,7 +58,24 @@ def query_db(sql: str, params: tuple = ()) -> list:
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
-        pass  # Silence request logs
+        # Record page/API requests to access_log (skip access-logs API to avoid recursion)
+        try:
+            parsed = urlparse(self.path)
+            if parsed.path == "/api/access-logs":
+                return
+            status_code = int(args[1]) if len(args) > 1 else 0
+            now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            ip = self.client_address[0] if self.client_address else "unknown"
+            ua = self.headers.get("User-Agent", "")
+            conn = sqlite3.connect(str(DB_FILE))
+            conn.execute(
+                "INSERT INTO access_log (timestamp, remote_ip, method, path, status_code, user_agent) VALUES (?, ?, ?, ?, ?, ?)",
+                (now, ip, self.command or "GET", parsed.path, status_code, ua),
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
 
     def respond_json(self, data):
         body = json.dumps(data).encode()
@@ -84,6 +120,10 @@ class Handler(BaseHTTPRequestHandler):
             self.api_hot_items()
         elif path == "/api/region-stock":
             self.api_region_stock()
+        elif path == "/api/catalog-metrics":
+            self.api_catalog_metrics()
+        elif path == "/api/access-logs":
+            self.api_access_logs(params)
         else:
             self.send_error(404)
 
@@ -584,6 +624,30 @@ class Handler(BaseHTTPRequestHandler):
         hot.sort(key=lambda x: x["avg_instock_minutes"])
         self.respond_json(hot[:30])
 
+    def api_catalog_metrics(self):
+        """Return catalog metrics history and current snapshot."""
+        history = query_db("""
+            SELECT timestamp, total_skus, unique_skus, unique_products, regions
+            FROM catalog_metrics ORDER BY timestamp ASC
+        """)
+        current = query_db("""
+            SELECT COUNT(*) as total_skus,
+                   COUNT(DISTINCT sku) as unique_skus,
+                   COUNT(DISTINCT name) as unique_products,
+                   COUNT(DISTINCT region) as regions
+            FROM products
+        """)
+        self.respond_json({"current": current[0] if current else {}, "history": history})
+
+    def api_access_logs(self, params):
+        """Return recent access log entries."""
+        limit = int(params.get("limit", ["200"])[0])
+        rows = query_db(
+            "SELECT * FROM access_log ORDER BY timestamp DESC LIMIT ?",
+            (limit,),
+        )
+        self.respond_json(rows)
+
     def serve_html(self):
         html = HTML_PAGE.encode()
         self.send_response(200)
@@ -762,6 +826,7 @@ HTML_PAGE = """<!DOCTYPE html>
   <button class="tab" data-panel="analytics">Analytics</button>
   <button class="tab" data-panel="watchlist">Watchlist</button>
   <button class="tab" data-panel="categories">Categories</button>
+  <button class="tab" data-panel="access-logs">Access Logs</button>
 </div>
 
 <div id="products" class="panel active">
@@ -888,6 +953,33 @@ HTML_PAGE = """<!DOCTYPE html>
   <div class="cat-grid" id="cat-grid"></div>
 </div>
 
+<div id="access-logs" class="panel">
+  <div class="controls">
+    <select id="filter-log-type">
+      <option value="all">All Requests</option>
+      <option value="pages">Pages Only</option>
+      <option value="api">API Only</option>
+    </select>
+    <button id="log-refresh-btn" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 14px;font-family:var(--font);font-size:12px;cursor:pointer;">Refresh</button>
+    <span id="log-count" style="color:var(--text2);font-size:11px;margin-left:8px"></span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>IP</th>
+          <th>Method</th>
+          <th>Path</th>
+          <th>Status</th>
+          <th>User Agent</th>
+        </tr>
+      </thead>
+      <tbody id="log-body"></tbody>
+    </table>
+  </div>
+</div>
+
 <div class="modal-bg" id="modal-bg">
   <div class="modal">
     <div class="modal-inner">
@@ -904,12 +996,23 @@ const $$ = s => document.querySelectorAll(s);
 let currentSort = 'name';
 let allProducts = [];
 
-// Tabs
+// Tabs — reload data on switch
+const tabLoaders = {
+  'products': () => loadProducts(),
+  'events': () => loadEvents(),
+  'sold-out': () => loadSoldOut(),
+  'analytics': () => loadAnalytics(),
+  'watchlist': () => loadWatchlist(),
+  'categories': () => loadCategories(),
+  'access-logs': () => loadAccessLogs(),
+};
 $$('.tab').forEach(t => t.addEventListener('click', () => {
   $$('.tab').forEach(x => x.classList.remove('active'));
   $$('.panel').forEach(x => x.classList.remove('active'));
   t.classList.add('active');
   $(`#${t.dataset.panel}`).classList.add('active');
+  const loader = tabLoaders[t.dataset.panel];
+  if (loader) loader();
 }));
 
 const CURRENCY_SYMBOLS = {
@@ -1649,10 +1752,12 @@ function buildRegionStockChart(regions, mode) {
 
 // Analytics
 async function loadAnalytics() {
-  const [data, regionStock] = await Promise.all([
+  const [data, regionStock, catalogData] = await Promise.allSettled([
     fetch('/api/price-analytics').then(r => r.json()),
     fetch('/api/region-stock').then(r => r.json()),
-  ]);
+    fetch('/api/catalog-metrics').then(r => r.json()),
+  ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
+  if (!data) return;
   let html = '';
 
   // Region stock breakdown chart
@@ -1762,6 +1867,21 @@ async function loadAnalytics() {
   }
   html += '</div>';
 
+  // Catalog size over time
+  if (catalogData) {
+    const cur = catalogData.current || {};
+    html += `<div class="analytics-section full">
+      <h3>Catalog Size Over Time</h3>
+      <div style="display:flex;gap:24px;margin-bottom:12px;flex-wrap:wrap">
+        <div><span style="color:var(--text2);font-size:11px">Total SKUs (all regions)</span><br><strong style="font-size:18px">${(cur.total_skus||0).toLocaleString()}</strong></div>
+        <div><span style="color:var(--text2);font-size:11px">Unique SKUs</span><br><strong style="font-size:18px;color:var(--blue)">${(cur.unique_skus||0).toLocaleString()}</strong></div>
+        <div><span style="color:var(--text2);font-size:11px">Unique Products</span><br><strong style="font-size:18px;color:var(--green)">${(cur.unique_products||0).toLocaleString()}</strong></div>
+        <div><span style="color:var(--text2);font-size:11px">Regions</span><br><strong style="font-size:18px">${cur.regions||0}</strong></div>
+      </div>
+      <div class="chart-area">${buildCatalogChart(catalogData.history || [])}</div>
+    </div>`;
+  }
+
   $('#analytics-content').innerHTML = html;
 
   // Attach region chart filter listener
@@ -1796,15 +1916,88 @@ async function loadHotItems() {
   }).join('');
 }
 
+// Catalog chart — dual-line: unique SKUs (blue) + unique products (green)
+function buildCatalogChart(history) {
+  if (!history || history.length < 2) return '<div class="empty">Not enough data for chart yet</div>';
+  const W = 700, H = 180, pad = {t:20, r:20, b:30, l:50};
+  const cW = W - pad.l - pad.r, cH = H - pad.t - pad.b;
+  const maxSku = Math.max(...history.map(h => h.unique_skus));
+  const maxProd = Math.max(...history.map(h => h.unique_products));
+  const maxY = Math.max(maxSku, maxProd) * 1.1;
+  const x = i => pad.l + (i / (history.length - 1)) * cW;
+  const y = v => pad.t + cH - (v / maxY) * cH;
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+  // Grid lines
+  for (let i = 0; i <= 4; i++) {
+    const gy = pad.t + (i / 4) * cH;
+    const val = Math.round(maxY * (1 - i / 4));
+    svg += `<line x1="${pad.l}" y1="${gy}" x2="${W-pad.r}" y2="${gy}" class="chart-grid"/>`;
+    svg += `<text x="${pad.l-8}" y="${gy+4}" class="chart-label" text-anchor="end">${val}</text>`;
+  }
+  // Unique SKUs line (blue)
+  let skuPath = history.map((h, i) => `${i===0?'M':'L'}${x(i)},${y(h.unique_skus)}`).join('');
+  svg += `<path d="${skuPath}" fill="none" stroke="var(--blue)" stroke-width="2"/>`;
+  // Unique products line (green)
+  let prodPath = history.map((h, i) => `${i===0?'M':'L'}${x(i)},${y(h.unique_products)}`).join('');
+  svg += `<path d="${prodPath}" fill="none" stroke="var(--green)" stroke-width="2"/>`;
+  // Dots on last points
+  const last = history[history.length-1];
+  svg += `<circle cx="${x(history.length-1)}" cy="${y(last.unique_skus)}" r="3" fill="var(--blue)"/>`;
+  svg += `<circle cx="${x(history.length-1)}" cy="${y(last.unique_products)}" r="3" fill="var(--green)"/>`;
+  // Date labels
+  const step = Math.max(1, Math.floor(history.length / 5));
+  for (let i = 0; i < history.length; i += step) {
+    const d = new Date(history[i].timestamp);
+    const label = (d.getMonth()+1) + '/' + d.getDate();
+    svg += `<text x="${x(i)}" y="${H-4}" class="chart-label" text-anchor="middle">${label}</text>`;
+  }
+  svg += '</svg>';
+  svg += `<div style="display:flex;gap:16px;justify-content:center;margin-top:4px;font-size:11px;color:var(--text2)">
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--blue);margin-right:4px;vertical-align:middle"></span>Unique SKUs</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span>Unique Products</span>
+  </div>`;
+  return svg;
+}
+
+// Access Logs
+async function loadAccessLogs() {
+  const logs = await fetch('/api/access-logs?limit=500').then(r => r.json());
+  const filter = $('#filter-log-type');
+  const filterVal = filter ? filter.value : 'all';
+  const filtered = logs.filter(l => {
+    if (filterVal === 'pages') return !l.path.startsWith('/api/');
+    if (filterVal === 'api') return l.path.startsWith('/api/');
+    return true;
+  });
+  $('#log-count').textContent = `${filtered.length} entries`;
+  $('#log-body').innerHTML = filtered.map(l => {
+    const statusCls = l.status_code >= 400 ? 'drop' : (l.status_code >= 300 ? '' : 'highlight');
+    const ua = l.user_agent || '';
+    const shortUA = ua.length > 60 ? ua.substring(0, 60) + '...' : ua;
+    return `<tr>
+      <td>${fmtDate(l.timestamp)}</td>
+      <td>${esc(l.remote_ip)}</td>
+      <td>${esc(l.method)}</td>
+      <td>${esc(l.path)}</td>
+      <td class="${statusCls}">${l.status_code}</td>
+      <td title="${esc(ua)}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(shortUA)}</td>
+    </tr>`;
+  }).join('');
+}
+
 // Auto-refresh every 60 seconds
 function refreshAll() {
-  loadStats();
-  loadProducts();
-  loadEvents();
-  loadSoldOut();
-  loadCategories();
-  loadWatchlist();
-  loadHotItems();
+  Promise.allSettled([
+    loadStats(),
+    loadProducts(),
+    loadEvents(),
+    loadSoldOut(),
+    loadCategories(),
+    loadWatchlist(),
+    loadHotItems(),
+    loadAnalytics(),
+  ]);
 }
 setInterval(refreshAll, 60000);
 
@@ -1823,6 +2016,10 @@ async function loadRegionFilter() {
     });
   });
 }
+
+// Access log filter + refresh button
+$('#filter-log-type').addEventListener('change', () => loadAccessLogs());
+$('#log-refresh-btn').addEventListener('click', () => loadAccessLogs());
 
 // Init
 loadStats();
@@ -1847,6 +2044,7 @@ if __name__ == "__main__":
         print("Run monitor.py first to create the database.")
         sys.exit(1)
 
+    ensure_access_log_table()
     server = HTTPServer(("0.0.0.0", PORT), Handler)
     print(f"Dashboard running at http://localhost:{PORT}")
     print("Press Ctrl+C to stop.")

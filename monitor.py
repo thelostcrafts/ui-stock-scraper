@@ -183,6 +183,16 @@ def init_db() -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_ph_sku ON price_history(sku);
         CREATE INDEX IF NOT EXISTS idx_ph_ts ON price_history(timestamp);
         CREATE INDEX IF NOT EXISTS idx_ph_region ON price_history(region);
+
+        CREATE TABLE IF NOT EXISTS catalog_metrics (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp       TEXT NOT NULL,
+            total_skus      INTEGER NOT NULL,
+            unique_skus     INTEGER NOT NULL,
+            unique_products INTEGER NOT NULL,
+            regions         INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_cm_ts ON catalog_metrics(timestamp);
     """)
     conn.commit()
     return conn
@@ -266,6 +276,22 @@ def db_record_scan(conn: sqlite3.Connection, now: str, build_id: str,
           stats["categories_changed"],
           stats["categories_unchanged"],
           stats["requests"]))
+    conn.commit()
+
+
+def db_record_catalog_metrics(conn: sqlite3.Connection, now: str):
+    """Record catalog-wide unique SKU and product counts."""
+    row = conn.execute("""
+        SELECT COUNT(*) as total_skus,
+               COUNT(DISTINCT sku) as unique_skus,
+               COUNT(DISTINCT name) as unique_products,
+               COUNT(DISTINCT region) as regions
+        FROM products
+    """).fetchone()
+    conn.execute("""
+        INSERT INTO catalog_metrics (timestamp, total_skus, unique_skus, unique_products, regions)
+        VALUES (?, ?, ?, ?, ?)
+    """, (now, row[0], row[1], row[2], row[3]))
     conn.commit()
 
 
@@ -703,6 +729,7 @@ def main():
 
             db_record_scan(conn, ts, build_id, total_skus,
                            status_counts, stats)
+            db_record_catalog_metrics(conn, ts)
             log(f"Database updated: {DB_FILE.name}")
         finally:
             conn.close()

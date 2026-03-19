@@ -81,6 +81,30 @@ CREATE TABLE IF NOT EXISTS catalog_metrics (
 );
 CREATE INDEX IF NOT EXISTS idx_cm_ts ON catalog_metrics(timestamp);
 
+-- Access log: dashboard visitor tracking
+CREATE TABLE IF NOT EXISTS access_log (
+    id          SERIAL PRIMARY KEY,
+    timestamp   TEXT NOT NULL,
+    remote_ip   TEXT NOT NULL,
+    method      TEXT NOT NULL,
+    path        TEXT NOT NULL,
+    status_code INTEGER NOT NULL,
+    user_agent  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_al_ts ON access_log(timestamp);
+
+-- Error log: captures backend/frontend errors for debugging
+CREATE TABLE IF NOT EXISTS error_log (
+    id          SERIAL PRIMARY KEY,
+    timestamp   TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    level       TEXT NOT NULL DEFAULT 'error',
+    message     TEXT NOT NULL,
+    traceback   TEXT,
+    context     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_el_ts ON error_log(timestamp);
+
 -- Monitor state: replaces JSON state files (content_hashes, build_id, backoff)
 CREATE TABLE IF NOT EXISTS monitor_state (
     key         TEXT PRIMARY KEY,

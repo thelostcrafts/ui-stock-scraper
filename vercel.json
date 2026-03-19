@@ -12,6 +12,10 @@
     { "source": "/api/region-stock", "destination": "/api/lookup?endpoint=region-stock" },
     { "source": "/api/scans", "destination": "/api/lookup?endpoint=scans" },
     { "source": "/api/catalog-metrics", "destination": "/api/lookup?endpoint=catalog-metrics" },
+    { "source": "/api/access-logs", "destination": "/api/lookup?endpoint=access-logs" },
+    { "source": "/api/log-access", "destination": "/api/lookup?endpoint=log-access" },
+    { "source": "/api/error-logs", "destination": "/api/lookup?endpoint=error-logs" },
+    { "source": "/api/log-error", "destination": "/api/lookup?endpoint=log-error" },
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
