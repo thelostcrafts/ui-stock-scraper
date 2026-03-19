@@ -129,6 +129,27 @@
                 font-family:var(--font); font-size:11px; cursor:pointer; }
   .remove-btn:hover { background:var(--red); color:#fff; }
 
+  .watch-input-wrap { position:relative; }
+  .watch-dropdown { position:absolute; top:100%; left:0; right:0; max-height:260px; overflow-y:auto;
+                    background:var(--bg2); border:1px solid var(--border); border-top:none; border-radius:0 0 8px 8px;
+                    z-index:100; display:none; }
+  .watch-dropdown.open { display:block; }
+  .watch-dd-item { display:flex; align-items:center; gap:10px; padding:8px 12px; cursor:pointer;
+                   font-size:12px; border-bottom:1px solid var(--border); }
+  .watch-dd-item:last-child { border-bottom:none; }
+  .watch-dd-item:hover, .watch-dd-item.active { background:var(--bg3); }
+  .watch-dd-item img { width:32px; height:32px; object-fit:contain; border-radius:4px; background:var(--bg3); flex-shrink:0; }
+  .watch-dd-item .dd-info { flex:1; min-width:0; }
+  .watch-dd-item .dd-name { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .watch-dd-item .dd-meta { color:var(--text2); font-size:11px; }
+  .watch-dd-item mark { background:var(--blue); color:#fff; border-radius:2px; padding:0 1px; }
+
+  .modal-watch-btn { display:inline-flex; align-items:center; gap:6px; background:var(--blue); color:#fff; border:none;
+                     border-radius:6px; padding:8px 16px; font-family:var(--font); font-size:13px; font-weight:600;
+                     cursor:pointer; margin-top:16px; transition:opacity .15s; }
+  .modal-watch-btn:hover { opacity:.85; }
+  .modal-watch-btn.added { background:var(--green); pointer-events:none; }
+
   .hot-card { flex:0 0 auto; background:var(--bg2); border:1px solid var(--border); border-radius:8px;
               padding:12px; width:180px; cursor:pointer; transition:border-color .15s; }
   .hot-card:hover { border-color:var(--blue); }
@@ -266,7 +287,10 @@
 
 <div id="watchlist" class="panel">
   <div class="controls">
-    <input type="text" id="watchlist-sku" placeholder="Enter SKU to watch...">
+    <div class="watch-input-wrap">
+      <input type="text" id="watchlist-sku" placeholder="Search by SKU or name..." autocomplete="off">
+      <div class="watch-dropdown" id="watch-dropdown"></div>
+    </div>
     <input type="text" id="watchlist-notes" placeholder="Notes (optional)" style="width:200px">
     <button id="watchlist-add-btn" style="background:var(--blue);color:#fff;border:none;border-radius:6px;padding:6px 14px;font-family:var(--font);font-size:12px;cursor:pointer;">Add to Watchlist</button>
   </div>
@@ -577,6 +601,11 @@ async function showProductDetail(sku, region) {
     <div class="detail-row"><span>First seen</span><span>${fmtDate(p.first_seen)}</span></div>
     <div class="detail-row"><span>Last updated</span><span>${fmtDate(p.last_updated)}</span></div>
   `;
+  if (_watchedSkus.has(p.sku)) {
+    html += `<button class="modal-watch-btn added" id="modal-watch-btn">Already on Watchlist</button>`;
+  } else {
+    html += `<button class="modal-watch-btn" id="modal-watch-btn" onclick="modalAddToWatchlist('${esc(p.sku)}')">+ Add to Watchlist</button>`;
+  }
 
   // Store modal data for time window re-renders
   window._modalData = {prices: data.prices, currency: p.currency, windows: winData.windows};
@@ -912,18 +941,131 @@ $('#watchlist-add-btn').addEventListener('click', async () => {
   const sku = $('#watchlist-sku').value.trim();
   if (!sku) return;
   const notes = $('#watchlist-notes').value.trim();
-  await fetch('/api/watchlist', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({sku, notes}),
-  });
+  await addToWatchlist(sku, notes);
   $('#watchlist-sku').value = '';
   $('#watchlist-notes').value = '';
+  $('#watch-dropdown').classList.remove('open');
   loadWatchlist();
 });
 
+async function addToWatchlist(sku, notes) {
+  await fetch('/api/watchlist', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({sku, notes: notes || ''}),
+  });
+}
+
+// Fuzzy match: checks if all characters of query appear in order in target
+function fuzzyMatch(query, target) {
+  const q = query.toLowerCase();
+  const t = target.toLowerCase();
+  if (t.includes(q)) return {match: true, score: t.indexOf(q) === 0 ? 3 : 2};
+  let qi = 0;
+  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] === q[qi]) qi++;
+  }
+  return qi === q.length ? {match: true, score: 1} : {match: false, score: 0};
+}
+
+// Highlight matched characters
+function fuzzyHighlight(query, text) {
+  const q = query.toLowerCase();
+  const t = text.toLowerCase();
+  // Prefer substring highlight
+  const idx = t.indexOf(q);
+  if (idx >= 0) {
+    return esc(text.slice(0, idx)) + '<mark>' + esc(text.slice(idx, idx + q.length)) + '</mark>' + esc(text.slice(idx + q.length));
+  }
+  // Fuzzy char-by-char highlight
+  let result = '', qi = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (qi < q.length && text[i].toLowerCase() === q[qi]) {
+      result += '<mark>' + esc(text[i]) + '</mark>';
+      qi++;
+    } else {
+      result += esc(text[i]);
+    }
+  }
+  return result;
+}
+
+let _ddActiveIdx = -1;
+const watchInput = $('#watchlist-sku');
+const watchDD = $('#watch-dropdown');
+
+watchInput.addEventListener('input', () => {
+  const q = watchInput.value.trim();
+  _ddActiveIdx = -1;
+  if (q.length < 2) { watchDD.classList.remove('open'); return; }
+
+  // Deduplicate by SKU (pick first region match)
+  const seen = new Set();
+  const matches = [];
+  for (const p of allProducts) {
+    if (seen.has(p.sku)) continue;
+    const skuMatch = fuzzyMatch(q, p.sku);
+    const nameMatch = fuzzyMatch(q, p.name);
+    const best = skuMatch.score >= nameMatch.score ? skuMatch : nameMatch;
+    if (best.match) {
+      seen.add(p.sku);
+      matches.push({...p, score: best.score});
+    }
+  }
+  matches.sort((a, b) => b.score - a.score);
+  const top = matches.slice(0, 12);
+
+  if (!top.length) { watchDD.classList.remove('open'); return; }
+
+  watchDD.innerHTML = top.map((p, i) => `
+    <div class="watch-dd-item" data-sku="${esc(p.sku)}" data-idx="${i}">
+      ${p.thumbnail ? `<img src="${esc(p.thumbnail)}" alt="">` : '<div style="width:32px;height:32px;background:var(--bg3);border-radius:4px;flex-shrink:0"></div>'}
+      <div class="dd-info">
+        <div class="dd-name">${fuzzyHighlight(q, p.name)}</div>
+        <div class="dd-meta">${fuzzyHighlight(q, p.sku)} · ${badge(p.status)} · ${regionFlag(p.region)} ${p.region}</div>
+      </div>
+    </div>
+  `).join('');
+  watchDD.classList.add('open');
+
+  watchDD.querySelectorAll('.watch-dd-item').forEach(item => {
+    item.addEventListener('click', () => {
+      watchInput.value = item.dataset.sku;
+      watchDD.classList.remove('open');
+    });
+  });
+});
+
+watchInput.addEventListener('keydown', (e) => {
+  const items = watchDD.querySelectorAll('.watch-dd-item');
+  if (!items.length || !watchDD.classList.contains('open')) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    _ddActiveIdx = Math.min(_ddActiveIdx + 1, items.length - 1);
+    items.forEach((el, i) => el.classList.toggle('active', i === _ddActiveIdx));
+    items[_ddActiveIdx].scrollIntoView({block:'nearest'});
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    _ddActiveIdx = Math.max(_ddActiveIdx - 1, 0);
+    items.forEach((el, i) => el.classList.toggle('active', i === _ddActiveIdx));
+    items[_ddActiveIdx].scrollIntoView({block:'nearest'});
+  } else if (e.key === 'Enter' && _ddActiveIdx >= 0) {
+    e.preventDefault();
+    watchInput.value = items[_ddActiveIdx].dataset.sku;
+    watchDD.classList.remove('open');
+  } else if (e.key === 'Escape') {
+    watchDD.classList.remove('open');
+  }
+});
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.watch-input-wrap')) watchDD.classList.remove('open');
+});
+
+let _watchedSkus = new Set();
 async function loadWatchlist() {
   const items = await fetch('/api/watchlist').then(r => r.json());
+  _watchedSkus = new Set(items.map(w => w.sku));
   const body = $('#watchlist-body');
   if (!items.length) {
     body.innerHTML = '<tr><td colspan="8" class="empty">No items in watchlist. Add SKUs above to track specific products.</td></tr>';
@@ -944,6 +1086,16 @@ async function loadWatchlist() {
   body.querySelectorAll('tr.clickable').forEach(tr => {
     tr.addEventListener('click', () => showProductDetail(tr.dataset.sku, tr.dataset.region));
   });
+}
+
+async function modalAddToWatchlist(sku) {
+  const btn = $('#modal-watch-btn');
+  btn.textContent = 'Adding...';
+  await addToWatchlist(sku, '');
+  _watchedSkus.add(sku);
+  btn.textContent = 'Added to Watchlist';
+  btn.classList.add('added');
+  loadWatchlist();
 }
 
 async function removeWatch(sku) {
