@@ -20,8 +20,13 @@ class handler(BaseHTTPRequestHandler):
         where = []
         args = []
         if event_type:
-            where.append('event_type = %s')
-            args.append(event_type)
+            types = [t.strip() for t in event_type.split(',') if t.strip()]
+            if len(types) == 1:
+                where.append('event_type = %s')
+                args.append(types[0])
+            elif types:
+                where.append('event_type IN (' + ','.join(['%s'] * len(types)) + ')')
+                args.extend(types)
         if sku:
             where.append('sku = %s')
             args.append(sku)

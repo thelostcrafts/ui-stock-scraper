@@ -226,6 +226,7 @@
 <div id="events" class="panel">
   <div class="controls">
     <select id="filter-event-type">
+      <option value="changes">Status & Price Changes</option>
       <option value="">All events</option>
       <option value="status_change">Status Changes</option>
       <option value="price_change">Price Changes</option>
@@ -477,7 +478,11 @@ async function loadEvents() {
   const type = $('#filter-event-type').value;
   const region = $('#filter-event-region').value;
   const params = new URLSearchParams();
-  if (type) params.set('type', type);
+  if (type === 'changes') {
+    params.set('type', 'status_change,price_change');
+  } else if (type) {
+    params.set('type', type);
+  }
   if (region) params.set('region', region);
   params.set('limit', '200');
 
