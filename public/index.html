@@ -68,6 +68,7 @@
 
   .arrow { color: var(--text2); }
   .table-wrap { overflow-x: auto; padding: 0 24px; max-height: calc(100vh - 300px); overflow-y: auto; }
+  #event-body tr:hover { background: var(--bg3); }
 
   .cat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; padding: 16px 24px; }
   .cat-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
@@ -405,6 +406,7 @@ const $$ = s => document.querySelectorAll(s);
 
 let currentSort = 'name';
 let allProducts = [];
+let _allProductsUnfiltered = [];
 
 // Tabs — refresh data when switching
 const tabLoaders = {
@@ -566,7 +568,7 @@ async function loadEvents() {
     } else if (e.new_value) {
       change = esc(e.new_value);
     }
-    return `<tr>
+    return `<tr style="cursor:pointer" onclick="showProductDetail('${esc(e.sku)}','${esc(e.region || '')}')">
       <td>${timeAgo(e.timestamp)}</td>
       <td>${eventBadge(e.event_type)}</td>
       <td><strong>${esc(e.sku)}</strong></td>
@@ -1152,10 +1154,11 @@ watchInput.addEventListener('input', () => {
   _ddActiveIdx = -1;
   if (q.length < 2) { watchDD.classList.remove('open'); return; }
 
-  // Deduplicate by SKU (pick first region match)
+  // Deduplicate by SKU (pick first region match) — use unfiltered product list
+  const searchList = _allProductsUnfiltered.length ? _allProductsUnfiltered : allProducts;
   const seen = new Set();
   const matches = [];
-  for (const p of allProducts) {
+  for (const p of searchList) {
     if (seen.has(p.sku)) continue;
     const skuMatch = fuzzyMatch(q, p.sku);
     const nameMatch = fuzzyMatch(q, p.name);
@@ -1691,9 +1694,15 @@ function logPageView(path) {
 }
 logPageView(location.pathname);
 
+// Load unfiltered product list for fuzzy search
+async function loadAllProductsForSearch() {
+  _allProductsUnfiltered = await fetch('/api/products').then(r => r.json());
+}
+
 // Init
 loadStats();
 loadProducts();
+loadAllProductsForSearch();
 loadEvents();
 loadSoldOut();
 loadCategories();

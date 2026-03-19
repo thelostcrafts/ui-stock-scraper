@@ -4,6 +4,7 @@ import json
 import traceback
 import sys
 import os
+from urllib.request import Request, urlopen
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db import query_db, execute_db, pg_json_dumps, log_error
@@ -142,6 +143,34 @@ class handler(BaseHTTPRequestHandler):
                     'SELECT * FROM error_log {} ORDER BY timestamp DESC LIMIT %s'.format(clause),
                     tuple(args),
                 )
+            elif endpoint == 'trigger-monitor':
+                secret = (params.get('key', [''])[0] or self.headers.get('x-cron-secret', '')).strip()
+                expected = os.environ.get('CRON_SECRET', '').strip()
+                if not expected:
+                    self._json_response({"error": "CRON_SECRET not configured"})
+                    return
+                if secret != expected:
+                    self.send_response(403)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(b'{"error": "forbidden"}')
+                    return
+                gh_token = os.environ.get('GH_DISPATCH_TOKEN', '')
+                if not gh_token:
+                    self._json_response({"error": "no GH_DISPATCH_TOKEN configured"})
+                    return
+                req = Request(
+                    'https://api.github.com/repos/thelostcrafts/ui-stock-scraper/actions/workflows/monitor.yml/dispatches',
+                    data=json.dumps({"ref": "main"}).encode(),
+                    headers={
+                        'Authorization': 'token ' + gh_token,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'User-Agent': 'ui-stock-scraper-cron',
+                    },
+                    method='POST',
+                )
+                resp = urlopen(req, timeout=10)
+                result = {"ok": True, "status": resp.status}
             else:
                 self.send_response(404)
                 self.send_header('Content-Type', 'application/json')
