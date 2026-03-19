@@ -758,10 +758,13 @@ function buildWindowsChart(windows) {
     return '<text class="chart-label" x="' + x(t).toFixed(1) + '" y="' + (H-2) + '" text-anchor="' + anchor + '">' + d + '</text>';
   }).join('');
 
-  // Legend
-  const legend = '<text class="chart-label" x="' + (W-pad.r) + '" y="' + (pad.t-1) + '" text-anchor="end"><tspan fill="var(--green)">■ </tspan><tspan>In Stock</tspan><tspan dx="6" fill="var(--red)">■ </tspan><tspan>Out of Stock</tspan><tspan dx="6" fill="var(--yellow)">■ </tspan><tspan>Coming Soon</tspan></text>';
+  const htmlLegend = '<div style="display:flex;justify-content:flex-end;gap:12px;font-size:11px;color:var(--text2);margin-top:6px;">'
+    + '<span><span style="color:var(--green)">■</span> In Stock</span>'
+    + '<span><span style="color:var(--red)">■</span> Out of Stock</span>'
+    + '<span><span style="color:var(--yellow)">■</span> Coming Soon</span>'
+    + '</div>';
 
-  return '<div class="chart-area" style="height:100px"><svg viewBox="0 0 ' + W + ' ' + H + '">' + bars + label + xLabels + legend + '</svg></div>';
+  return '<div class="chart-area" style="height:100px"><svg viewBox="0 0 ' + W + ' ' + H + '">' + bars + label + xLabels + '</svg></div>' + htmlLegend;
 }
 
 function fmtDate(iso) {
