@@ -13,28 +13,28 @@ import psycopg2.extras
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        # Use a SINGLE connection for all queries to avoid exhausting
-        # Neon's connection pool and stay within Vercel's 10-second timeout.
         conn = get_db()
         try:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-            # Get all SKUs that have had status transitions (multiple distinct statuses)
+            # Get all SKU+region combos that have had status transitions
             cur.execute("""
-                SELECT DISTINCT ph.sku, p.name, p.status, p.category, p.price_cents, p.thumbnail
+                SELECT DISTINCT ph.sku, ph.region, p.name, p.status, p.category,
+                       p.price_cents, p.currency, p.thumbnail
                 FROM price_history ph
-                JOIN products p ON ph.sku = p.sku AND p.region = 'us/en'
-                WHERE ph.region = 'us/en'
-                GROUP BY ph.sku, p.name, p.status, p.category, p.price_cents, p.thumbnail
+                JOIN products p ON ph.sku = p.sku AND ph.region = p.region
+                GROUP BY ph.sku, ph.region, p.name, p.status, p.category,
+                         p.price_cents, p.currency, p.thumbnail
                 HAVING COUNT(DISTINCT ph.status) > 1
             """)
-            all_skus = [dict(row) for row in cur.fetchall()]
+            all_entries = [dict(row) for row in cur.fetchall()]
 
-            hot = []
-            for row in all_skus:
+            # Compute hotness per SKU+region
+            per_sku = {}  # sku -> list of region results
+            for row in all_entries:
                 cur.execute(
-                    "SELECT timestamp, status FROM price_history WHERE sku = %s AND region = 'us/en' ORDER BY timestamp",
-                    (row["sku"],),
+                    "SELECT timestamp, status FROM price_history WHERE sku = %s AND region = %s ORDER BY timestamp",
+                    (row["sku"], row["region"]),
                 )
                 prices = [dict(r) for r in cur.fetchall()]
                 if len(prices) < 2:
@@ -49,10 +49,8 @@ class handler(BaseHTTPRequestHandler):
                         windows.append({"status": cur_status, "start": win_start, "end": p["timestamp"]})
                         cur_status = p["status"]
                         win_start = p["timestamp"]
-                # Current open window
                 windows.append({"status": cur_status, "start": win_start, "end": None})
 
-                # Compute durations for Available windows
                 avail_windows = []
                 for w in windows:
                     if w["status"] == "Available" and w["end"]:
@@ -70,24 +68,62 @@ class handler(BaseHTTPRequestHandler):
                 min_mins = min(avail_windows)
                 transitions = len(windows) - 1
 
-                hot.append({
-                    "sku": row["sku"],
-                    "name": row["name"],
+                entry = {
+                    "region": row["region"],
                     "current_status": row["status"],
-                    "category": row["category"],
                     "price_cents": row["price_cents"],
-                    "thumbnail": row["thumbnail"],
+                    "currency": row["currency"],
                     "avg_instock_minutes": round(avg_mins, 1),
                     "min_instock_minutes": round(min_mins, 1),
                     "instock_windows": len(avail_windows),
                     "total_transitions": transitions,
-                })
+                }
+
+                sku = row["sku"]
+                if sku not in per_sku:
+                    per_sku[sku] = {
+                        "sku": sku,
+                        "name": row["name"],
+                        "category": row["category"],
+                        "thumbnail": row["thumbnail"],
+                        "regions": [],
+                    }
+                per_sku[sku]["regions"].append(entry)
 
             cur.close()
         finally:
             conn.close()
 
-        # Sort by shortest average in-stock duration
+        # Build final list: pick hottest region per SKU, include all regions info
+        hot = []
+        for sku, data in per_sku.items():
+            regions = data["regions"]
+            # Sort regions by avg_instock_minutes (hottest first)
+            regions.sort(key=lambda x: x["avg_instock_minutes"])
+            hottest = regions[0]
+
+            hot.append({
+                "sku": data["sku"],
+                "name": data["name"],
+                "category": data["category"],
+                "thumbnail": data["thumbnail"],
+                "current_status": hottest["current_status"],
+                "hottest_region": hottest["region"],
+                "avg_instock_minutes": hottest["avg_instock_minutes"],
+                "min_instock_minutes": hottest["min_instock_minutes"],
+                "instock_windows": hottest["instock_windows"],
+                "total_transitions": hottest["total_transitions"],
+                "regions_hot": len(regions),
+                "region_details": [
+                    {
+                        "region": r["region"],
+                        "avg_instock_minutes": r["avg_instock_minutes"],
+                        "current_status": r["current_status"],
+                    }
+                    for r in regions
+                ],
+            })
+
         hot.sort(key=lambda x: x["avg_instock_minutes"])
         result = hot[:30]
 

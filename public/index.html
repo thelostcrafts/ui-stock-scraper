@@ -1190,10 +1190,18 @@ async function loadHotItems() {
   section.style.display = 'block';
   list.innerHTML = items.map(h => {
     const statusDot = h.current_status === 'Available' ? 'avail' : h.current_status === 'SoldOut' ? 'sold' : 'soon';
-    return `<div class="hot-card" data-sku="${esc(h.sku)}" onclick="showProductDetail('${esc(h.sku)}')">
+    const flag = regionFlag(h.hottest_region);
+    const regionLabel = h.regions_hot > 1
+      ? `${flag} ${h.hottest_region} +${h.regions_hot - 1} more`
+      : `${flag} ${h.hottest_region}`;
+    const regionTooltip = h.region_details
+      ? h.region_details.map(r => `${regionFlag(r.region)} ${r.region}: avg ${fmtDuration(r.avg_instock_minutes)}`).join('\n')
+      : '';
+    return `<div class="hot-card" data-sku="${esc(h.sku)}" onclick="showProductDetail('${esc(h.sku)}', '${esc(h.hottest_region)}')">
       ${h.thumbnail ? `<img src="${esc(h.thumbnail)}" alt="${esc(h.name)}">` : ''}
       <div class="hc-name" title="${esc(h.name)}">${esc(h.name)}</div>
       <div class="hc-sku">${esc(h.sku)} · <span class="status-dot ${statusDot}"></span></div>
+      <div class="hc-stat" title="${esc(regionTooltip)}"><span>Hottest in</span><span class="val">${regionLabel}</span></div>
       <div class="hc-stat"><span>Avg in-stock</span><span class="val fast">${fmtDuration(h.avg_instock_minutes)}</span></div>
       <div class="hc-stat"><span>Shortest</span><span class="val fast">${fmtDuration(h.min_instock_minutes)}</span></div>
       <div class="hc-stat"><span>Transitions</span><span class="val">${h.total_transitions}</span></div>
