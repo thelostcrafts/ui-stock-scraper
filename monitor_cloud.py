@@ -124,13 +124,21 @@ def save_state(key: str, value: str):
 
 def db_upsert_products(conn, products: dict, region: str, now: str):
     """Insert or update all products in a single transaction."""
+    if not products:
+        return
+    rows = [
+        (p["sku"], region, p["slug"], p["name"], p["category"], p["subcategory"],
+         p["price_cents"], p["currency"], p.get("regular_price_cents"),
+         p["status"], p.get("variant_id"), p.get("thumbnail"), now, now)
+        for p in products.values()
+    ]
     with conn.cursor() as cur:
-        cur.executemany("""
+        psycopg2.extras.execute_values(cur, """
             INSERT INTO products (sku, region, slug, name, category, subcategory,
                                   price_cents, currency, regular_price_cents,
                                   status, variant_id, thumbnail,
                                   first_seen, last_updated)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES %s
             ON CONFLICT(sku, region) DO UPDATE SET
                 slug=excluded.slug, name=excluded.name,
                 category=excluded.category, subcategory=excluded.subcategory,
@@ -139,12 +147,7 @@ def db_upsert_products(conn, products: dict, region: str, now: str):
                 status=excluded.status, variant_id=excluded.variant_id,
                 thumbnail=excluded.thumbnail,
                 last_updated=excluded.last_updated
-        """, [
-            (p["sku"], region, p["slug"], p["name"], p["category"], p["subcategory"],
-             p["price_cents"], p["currency"], p.get("regular_price_cents"),
-             p["status"], p.get("variant_id"), p.get("thumbnail"), now, now)
-            for p in products.values()
-        ])
+        """, rows, page_size=500)
     conn.commit()
 
 
@@ -167,24 +170,27 @@ def db_record_events(conn, changes: dict, region: str, now: str):
 
     if rows:
         with conn.cursor() as cur:
-            cur.executemany("""
+            psycopg2.extras.execute_values(cur, """
                 INSERT INTO events (timestamp, sku, region, name, event_type,
                                     old_value, new_value, details)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """, rows)
+                VALUES %s
+            """, rows, page_size=500)
         conn.commit()
 
 
 def db_record_prices(conn, products: dict, region: str, now: str):
     """Record price + status snapshot for every SKU (time-series data)."""
+    if not products:
+        return
+    rows = [
+        (now, p["sku"], region, p["price_cents"], p["status"])
+        for p in products.values()
+    ]
     with conn.cursor() as cur:
-        cur.executemany("""
+        psycopg2.extras.execute_values(cur, """
             INSERT INTO price_history (timestamp, sku, region, price_cents, status)
-            VALUES (%s, %s, %s, %s, %s)
-        """, [
-            (now, p["sku"], region, p["price_cents"], p["status"])
-            for p in products.values()
-        ])
+            VALUES %s
+        """, rows, page_size=500)
     conn.commit()
 
 
