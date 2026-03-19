@@ -161,6 +161,19 @@
   .hot-card .hc-stat { font-size:11px; display:flex; justify-content:space-between; margin:2px 0; }
   .hot-card .hc-stat .val { font-weight:600; }
   .hot-card .hc-stat .val.fast { color:var(--red); }
+
+  .release-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:12px; padding:16px 24px; }
+  .release-card { background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:14px; cursor:pointer; transition:border-color .15s; }
+  .release-card:hover { border-color:var(--blue); }
+  .release-card img { width:80px; height:80px; object-fit:contain; border-radius:4px; background:var(--bg3); display:block; margin:0 auto 10px; }
+  .release-card .rc-name { font-size:13px; font-weight:600; margin-bottom:4px; }
+  .release-card .rc-sku { font-size:11px; color:var(--text2); margin-bottom:8px; }
+  .release-card .rc-row { font-size:11px; display:flex; justify-content:space-between; margin:3px 0; }
+  .release-card .rc-row .val { font-weight:600; }
+  .release-card .rc-badge { display:inline-block; font-size:10px; font-weight:600; padding:2px 8px; border-radius:4px; }
+  .release-card .rc-badge.avail { background:rgba(0,200,83,.15); color:var(--green); }
+  .release-card .rc-badge.sold { background:rgba(255,82,82,.15); color:var(--red); }
+  .release-card .rc-badge.soon { background:rgba(255,171,0,.15); color:var(--yellow); }
 </style>
 </head>
 <body>
@@ -192,6 +205,8 @@
 
 <div class="tabs">
   <button class="tab active" data-panel="products">Products</button>
+  <button class="tab" data-panel="new-releases-tab">New Releases</button>
+  <button class="tab" data-panel="hot-items-tab">Hot Items</button>
   <button class="tab" data-panel="sold-out">Sold Out</button>
   <button class="tab" data-panel="events">Events</button>
   <button class="tab" data-panel="analytics">Analytics</button>
@@ -399,6 +414,26 @@
   </div>
 </div>
 
+<div id="new-releases-tab" class="panel">
+  <div style="padding:16px 24px 0; display:flex; align-items:center; gap:8px;">
+    <span style="font-size:14px; font-weight:600;">New Releases</span>
+    <span style="font-size:11px; color:var(--text2);">Products added to the store in the last 14 days</span>
+  </div>
+  <div id="new-releases-grid" class="release-grid">
+    <div style="color:var(--text2);font-size:13px;">Loading...</div>
+  </div>
+</div>
+
+<div id="hot-items-tab" class="panel">
+  <div style="padding:16px 24px 0; display:flex; align-items:center; gap:8px;">
+    <span style="font-size:14px; font-weight:600;">Hot Items</span>
+    <span style="font-size:11px; color:var(--text2);">Products that sell out fastest</span>
+  </div>
+  <div id="hot-items-grid" class="release-grid">
+    <div style="color:var(--text2);font-size:13px;">Loading...</div>
+  </div>
+</div>
+
 <div class="modal-bg" id="modal-bg">
   <div class="modal">
     <div class="modal-inner">
@@ -419,6 +454,8 @@ let _allProductsUnfiltered = [];
 // Tabs — refresh data when switching
 const tabLoaders = {
   'products': () => { loadProducts(); loadStats(); },
+  'new-releases-tab': loadNewReleasesTab,
+  'hot-items-tab': loadHotItemsTab,
   'sold-out': loadSoldOut,
   'events': loadEvents,
   'analytics': loadAnalytics,
@@ -1521,17 +1558,17 @@ async function loadAnalytics() {
   }
 }
 
-// Hot items
+// Hot items (dashboard preview — max 6)
 async function loadHotItems() {
-  const items = await fetch('/api/hot-items').then(r => r.json());
+  _hotItemsData = await fetch('/api/hot-items').then(r => r.json());
   const section = $('#hot-items-section');
   const list = $('#hot-items-list');
-  if (!items.length) {
+  if (!_hotItemsData.length) {
     section.style.display = 'none';
     return;
   }
   section.style.display = 'block';
-  list.innerHTML = items.map(h => {
+  list.innerHTML = _hotItemsData.slice(0, 6).map(h => {
     const statusDot = h.current_status === 'Available' ? 'avail' : h.current_status === 'SoldOut' ? 'sold' : 'soon';
     const flag = regionFlag(h.hottest_region);
     const regionLabel = h.regions_hot > 1
@@ -1552,22 +1589,34 @@ async function loadHotItems() {
   }).join('');
 }
 
+function renderReleaseCard(item) {
+  const statusDot = item.status === 'Available' ? 'avail' : item.status === 'SoldOut' ? 'sold' : 'soon';
+  const statusLabel = item.status === 'ComingSoon' ? 'Coming Soon' : item.status;
+  const regions = item.regions || [];
+  const regionStr = regions.map(r => regionFlag(r) + ' ' + r).join(', ');
+  return `<div class="release-card" onclick="showProductDetail('${esc(item.sku)}', '${esc(regions[0] || 'us/en')}')">
+    ${item.thumbnail ? `<img src="${esc(item.thumbnail)}" alt="${esc(item.name)}">` : ''}
+    <div class="rc-name">${esc(item.name)}</div>
+    <div class="rc-sku">${esc(item.sku)}</div>
+    <div style="margin-bottom:8px"><span class="rc-badge ${statusDot}">${statusLabel}</span></div>
+    <div class="rc-row"><span>Price</span><span class="val">${esc(item.price || '')}</span></div>
+    <div class="rc-row"><span>Detected</span><span class="val">${timeAgo(item.first_detected)}</span></div>
+    <div class="rc-row"><span>Regions</span><span class="val">${regions.length}</span></div>
+  </div>`;
+}
+
+let _newReleasesData = [];
 async function loadNewReleases() {
-  const items = await fetch('/api/new-releases').then(r => r.json());
+  _newReleasesData = await fetch('/api/new-releases').then(r => r.json());
   const section = $('#new-releases-section');
   const list = $('#new-releases-list');
-  if (!items.length) {
-    section.style.display = 'none';
-    return;
-  }
+  if (!_newReleasesData.length) { section.style.display = 'none'; return; }
   section.style.display = 'block';
-  list.innerHTML = items.map(item => {
+  // Dashboard preview: max 6 items as horizontal cards
+  list.innerHTML = _newReleasesData.slice(0, 6).map(item => {
     const statusDot = item.status === 'Available' ? 'avail' : item.status === 'SoldOut' ? 'sold' : 'soon';
     const statusLabel = item.status === 'ComingSoon' ? 'Coming Soon' : item.status;
     const regions = item.regions || [];
-    const regionStr = regions.length > 1
-      ? `${regions.length} regions`
-      : regions[0] || '';
     return `<div class="hot-card" onclick="showProductDetail('${esc(item.sku)}', '${esc(regions[0] || 'us/en')}')">
       ${item.thumbnail ? `<img src="${esc(item.thumbnail)}" alt="${esc(item.name)}">` : ''}
       <div class="hc-name" title="${esc(item.name)}">${esc(item.name)}</div>
@@ -1575,9 +1624,42 @@ async function loadNewReleases() {
       <div class="hc-stat"><span>Status</span><span class="val">${statusLabel}</span></div>
       <div class="hc-stat"><span>Price</span><span class="val">${esc(item.price || '')}</span></div>
       <div class="hc-stat"><span>Detected</span><span class="val">${timeAgo(item.first_detected)}</span></div>
-      <div class="hc-stat"><span>Regions</span><span class="val">${regionStr}</span></div>
     </div>`;
   }).join('');
+}
+
+async function loadNewReleasesTab() {
+  if (!_newReleasesData.length) await loadNewReleases();
+  const grid = $('#new-releases-grid');
+  if (!_newReleasesData.length) { grid.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:8px;">No new releases detected in the last 14 days.</div>'; return; }
+  grid.innerHTML = _newReleasesData.map(renderReleaseCard).join('');
+}
+
+function renderHotCard(h) {
+  const statusDot = h.current_status === 'Available' ? 'avail' : h.current_status === 'SoldOut' ? 'sold' : 'soon';
+  const statusLabel = h.current_status === 'ComingSoon' ? 'Coming Soon' : h.current_status;
+  const regionStr = (h.region_details || []).map(r => regionFlag(r.region) + ' ' + r.region).join(', ');
+  return `<div class="release-card" onclick="showProductDetail('${esc(h.sku)}', '${esc(h.hottest_region)}')">
+    ${h.thumbnail ? `<img src="${esc(h.thumbnail)}" alt="${esc(h.name)}">` : ''}
+    <div class="rc-name">${esc(h.name)}</div>
+    <div class="rc-sku">${esc(h.sku)}</div>
+    <div style="margin-bottom:8px"><span class="rc-badge ${statusDot}">${statusLabel}</span></div>
+    <div class="rc-row"><span>Hottest in</span><span class="val">${regionFlag(h.hottest_region)} ${h.hottest_region}</span></div>
+    <div class="rc-row"><span>Avg in-stock</span><span class="val" style="color:var(--red)">${fmtDuration(h.avg_instock_minutes)}</span></div>
+    <div class="rc-row"><span>Shortest</span><span class="val" style="color:var(--red)">${fmtDuration(h.min_instock_minutes)}</span></div>
+    <div class="rc-row"><span>Transitions</span><span class="val">${h.total_transitions}</span></div>
+    <div class="rc-row"><span>Regions hot</span><span class="val">${h.regions_hot}</span></div>
+  </div>`;
+}
+
+let _hotItemsData = [];
+async function loadHotItemsTab() {
+  if (!_hotItemsData.length) {
+    _hotItemsData = await fetch('/api/hot-items').then(r => r.json());
+  }
+  const grid = $('#hot-items-grid');
+  if (!_hotItemsData.length) { grid.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:8px;">No hot items detected yet.</div>'; return; }
+  grid.innerHTML = _hotItemsData.map(renderHotCard).join('');
 }
 
 // Auto-refresh every 60 seconds
