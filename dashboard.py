@@ -82,6 +82,8 @@ class Handler(BaseHTTPRequestHandler):
             self.api_availability_windows(params)
         elif path == "/api/hot-items":
             self.api_hot_items()
+        elif path == "/api/region-stock":
+            self.api_region_stock()
         else:
             self.send_error(404)
 
@@ -150,6 +152,7 @@ class Handler(BaseHTTPRequestHandler):
         limit = int(params.get("limit", ["100"])[0])
         event_type = params.get("type", [None])[0]
         sku = params.get("sku", [None])[0]
+        region = params.get("region", [None])[0]
 
         where = []
         args = []
@@ -159,6 +162,9 @@ class Handler(BaseHTTPRequestHandler):
         if sku:
             where.append("sku = ?")
             args.append(sku)
+        if region:
+            where.append("region = ?")
+            args.append(region)
 
         clause = f"WHERE {' AND '.join(where)}" if where else ""
         args.append(limit)
@@ -224,18 +230,30 @@ class Handler(BaseHTTPRequestHandler):
 
     def api_product_history(self, params):
         sku = params.get("sku", [None])[0]
+        region = params.get("region", [None])[0]
         if not sku:
             self.respond_json({"events": [], "prices": []})
             return
-        events = query_db(
-            "SELECT * FROM events WHERE sku = ? ORDER BY timestamp DESC LIMIT 50",
-            (sku,),
-        )
-        prices = query_db(
-            "SELECT timestamp, price_cents, status FROM price_history WHERE sku = ? ORDER BY timestamp",
-            (sku,),
-        )
-        product = query_db("SELECT * FROM products WHERE sku = ?", (sku,))
+        if region:
+            events = query_db(
+                "SELECT * FROM events WHERE sku = ? AND region = ? ORDER BY timestamp DESC LIMIT 50",
+                (sku, region),
+            )
+            prices = query_db(
+                "SELECT timestamp, price_cents, status FROM price_history WHERE sku = ? AND region = ? ORDER BY timestamp",
+                (sku, region),
+            )
+            product = query_db("SELECT * FROM products WHERE sku = ? AND region = ?", (sku, region))
+        else:
+            events = query_db(
+                "SELECT * FROM events WHERE sku = ? ORDER BY timestamp DESC LIMIT 50",
+                (sku,),
+            )
+            prices = query_db(
+                "SELECT timestamp, price_cents, status FROM price_history WHERE sku = ? ORDER BY timestamp",
+                (sku,),
+            )
+            product = query_db("SELECT * FROM products WHERE sku = ? ORDER BY region LIMIT 1", (sku,))
         self.respond_json({
             "product": product[0] if product else None,
             "events": events,
@@ -243,12 +261,25 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def api_sold_out(self, params):
-        rows = query_db("""
-            SELECT sku, slug, name, category, subcategory, price_cents, currency
-            FROM products
-            WHERE status = 'SoldOut'
-            ORDER BY category, name
-        """)
+        where = ["status = 'SoldOut'"]
+        args = []
+        region = params.get("region", [None])[0]
+        if region:
+            where.append("region = ?")
+            args.append(region)
+        category = params.get("category", [None])[0]
+        if category:
+            where.append("category = ?")
+            args.append(category)
+        search = params.get("q", [None])[0]
+        if search:
+            where.append("(sku LIKE ? OR name LIKE ?)")
+            args.extend([f"%{search}%", f"%{search}%"])
+        clause = "WHERE " + " AND ".join(where)
+        rows = query_db(
+            f"SELECT sku, slug, name, category, subcategory, price_cents, currency, region FROM products {clause} ORDER BY category, name",
+            tuple(args),
+        )
         self.respond_json(rows)
 
     def api_health(self):
@@ -277,9 +308,9 @@ class Handler(BaseHTTPRequestHandler):
     def api_watchlist_get(self):
         rows = query_db("""
             SELECT w.sku, w.added_at, w.notes,
-                   p.name, p.status, p.price_cents, p.category, p.thumbnail
+                   p.name, p.status, p.price_cents, p.currency, p.category, p.thumbnail, p.region
             FROM watchlist w
-            LEFT JOIN products p ON w.sku = p.sku
+            LEFT JOIN products p ON w.sku = p.sku AND p.region = 'us/en'
             ORDER BY w.added_at DESC
         """)
         self.respond_json(rows)
@@ -361,7 +392,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # Products on sale (regular_price_cents != NULL and > price_cents)
         on_sale = query_db("""
-            SELECT sku, name, price_cents, regular_price_cents, category,
+            SELECT sku, name, price_cents, regular_price_cents, category, currency,
                    (regular_price_cents - price_cents) as savings_cents
             FROM products
             WHERE regular_price_cents IS NOT NULL
@@ -387,17 +418,39 @@ class Handler(BaseHTTPRequestHandler):
         """)
         self.respond_json(rows)
 
+    def api_region_stock(self):
+        """Stock breakdown by region — total, available, sold out, coming soon per storefront."""
+        rows = query_db("""
+            SELECT region,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN status='Available' THEN 1 ELSE 0 END) as available,
+                   SUM(CASE WHEN status='SoldOut' THEN 1 ELSE 0 END) as sold_out,
+                   SUM(CASE WHEN status='ComingSoon' THEN 1 ELSE 0 END) as coming_soon,
+                   SUM(CASE WHEN status='RegionNotAvailable' THEN 1 ELSE 0 END) as region_na
+            FROM products
+            GROUP BY region
+            ORDER BY sold_out DESC
+        """)
+        self.respond_json(rows)
+
     def api_availability_windows(self, params):
         """Compute availability windows for a SKU — how long it stayed in each status."""
         sku = params.get("sku", [None])[0]
+        region = params.get("region", [None])[0]
         if not sku:
             self.respond_json({"windows": []})
             return
 
-        rows = query_db(
-            "SELECT timestamp, status FROM price_history WHERE sku = ? ORDER BY timestamp",
-            (sku,),
-        )
+        if region:
+            rows = query_db(
+                "SELECT timestamp, status FROM price_history WHERE sku = ? AND region = ? ORDER BY timestamp",
+                (sku, region),
+            )
+        else:
+            rows = query_db(
+                "SELECT timestamp, status FROM price_history WHERE sku = ? ORDER BY timestamp",
+                (sku,),
+            )
         if not rows:
             self.respond_json({"windows": []})
             return
@@ -568,6 +621,10 @@ HTML_PAGE = """<!DOCTYPE html>
   .stat .value.green { color: var(--green); }
   .stat .value.red { color: var(--red); }
   .stat .value.yellow { color: var(--yellow); }
+  .filtered-stats { padding-top:0; }
+  .filtered-stats .stat { background:transparent; border:1px dashed var(--border); padding:8px 16px; }
+  .filtered-stats .stat .value { font-size:20px; }
+  .filtered-stats .stat .label { font-size:10px; }
 
   .tabs { display: flex; gap: 0; padding: 0 24px; border-bottom: 1px solid var(--border); }
   .tab { padding: 10px 20px; cursor: pointer; color: var(--text2); border-bottom: 2px solid transparent; font-size: 13px; font-family: var(--font); background: none; border-top: none; border-left: none; border-right: none; }
@@ -630,6 +687,12 @@ HTML_PAGE = """<!DOCTYPE html>
   .modal .close-btn:hover { color:var(--text); }
   .modal-inner { position:relative; }
 
+  .tw-bar { display:flex; gap:4px; margin-bottom:10px; }
+  .tw-btn { background:var(--bg3); border:1px solid var(--border); color:var(--text2); border-radius:6px; padding:4px 12px;
+            font-family:var(--font); font-size:11px; font-weight:600; cursor:pointer; transition:all .15s; }
+  .tw-btn:hover { border-color:var(--blue); color:var(--text); }
+  .tw-btn.active { background:var(--blue); border-color:var(--blue); color:#fff; }
+
   .chart-area { width:100%; height:220px; background:var(--bg3); border-radius:8px; padding:16px; margin-top:8px; position:relative; overflow:hidden; }
   .chart-area svg { width:100%; height:100%; }
   .chart-line { fill:none; stroke:var(--blue); stroke-width:2; }
@@ -682,6 +745,7 @@ HTML_PAGE = """<!DOCTYPE html>
 </div>
 
 <div class="stats" id="stats"></div>
+<div class="stats filtered-stats" id="filtered-stats" style="display:none"></div>
 
 <div id="hot-items-section" style="display:none; padding:0 24px 12px;">
   <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
@@ -742,6 +806,9 @@ HTML_PAGE = """<!DOCTYPE html>
       <option value="new_product">New Products</option>
       <option value="removed_product">Removed Products</option>
     </select>
+    <select id="filter-event-region" class="region-filter">
+      <option value="">All regions</option>
+    </select>
   </div>
   <div class="table-wrap">
     <table>
@@ -751,6 +818,7 @@ HTML_PAGE = """<!DOCTYPE html>
           <th>Type</th>
           <th>SKU</th>
           <th>Name</th>
+          <th>Region</th>
           <th>Change</th>
         </tr>
       </thead>
@@ -762,6 +830,12 @@ HTML_PAGE = """<!DOCTYPE html>
 <div id="sold-out" class="panel">
   <div class="controls">
     <input type="text" id="search-soldout" placeholder="Search sold out items...">
+    <select id="filter-soldout-category" class="category-filter">
+      <option value="">All categories</option>
+    </select>
+    <select id="filter-soldout-region" class="region-filter">
+      <option value="">All regions</option>
+    </select>
   </div>
   <div class="table-wrap">
     <table>
@@ -771,7 +845,7 @@ HTML_PAGE = """<!DOCTYPE html>
           <th>Name</th>
           <th>Price</th>
           <th>Category</th>
-          <th>Subcategory</th>
+          <th>Region</th>
         </tr>
       </thead>
       <tbody id="soldout-body"></tbody>
@@ -838,8 +912,14 @@ $$('.tab').forEach(t => t.addEventListener('click', () => {
   $(`#${t.dataset.panel}`).classList.add('active');
 }));
 
-function fmt(cents) {
-  return '$' + (cents / 100).toLocaleString('en-US', {minimumFractionDigits: 2});
+const CURRENCY_SYMBOLS = {
+  USD:'$', EUR:'€', GBP:'£', CAD:'CA$', JPY:'¥', MXN:'MX$', BRL:'R$',
+  INR:'₹', SGD:'S$', AED:'د.إ', ZAR:'R', TWD:'NT$', CNY:'¥', PHP:'₱'
+};
+function fmt(cents, currency) {
+  if (currency === 'JPY') return '¥' + Math.round(cents / 100).toLocaleString();
+  const sym = (currency && CURRENCY_SYMBOLS[currency]) || '$';
+  return sym + (cents / 100).toLocaleString('en-US', {minimumFractionDigits: 2});
 }
 
 function badge(status) {
@@ -877,6 +957,38 @@ async function loadStats() {
   if (data.last_scan) {
     $('#scan-meta').textContent = `Last scan: ${timeAgo(data.last_scan.timestamp)} · Build ${data.last_scan.build_id}`;
   }
+  updateFilteredStats();
+}
+
+function updateFilteredStats() {
+  const region = $('#filter-region').value;
+  const status = $('#filter-status').value;
+  const category = $('#filter-category').value;
+  const el = $('#filtered-stats');
+
+  if (!region && !status && !category) {
+    el.style.display = 'none';
+    return;
+  }
+
+  // Compute from allProducts which reflects current filters
+  const items = allProducts;
+  const total = items.length;
+  const avail = items.filter(p => p.status === 'Available').length;
+  const sold = items.filter(p => p.status === 'SoldOut').length;
+  const soon = items.filter(p => p.status === 'ComingSoon').length;
+  const rna = items.filter(p => p.status === 'RegionNotAvailable').length;
+
+  const filterLabel = [region, status, category ? category.replace('all-','') : ''].filter(Boolean).join(' · ');
+
+  el.style.display = 'grid';
+  el.innerHTML = `
+    <div class="stat"><div class="label">Filtered: ${esc(filterLabel)}</div><div class="value">${total} SKUs</div></div>
+    <div class="stat"><div class="label">Available (filtered)</div><div class="value green">${avail}</div></div>
+    <div class="stat"><div class="label">Sold Out (filtered)</div><div class="value red">${sold}</div></div>
+    <div class="stat"><div class="label">Coming Soon (filtered)</div><div class="value yellow">${soon}</div></div>
+    ${rna ? `<div class="stat"><div class="label">Region N/A</div><div class="value" style="color:#7c8ba5">${rna}</div></div>` : ''}
+  `;
 }
 
 async function loadProducts() {
@@ -893,6 +1005,7 @@ async function loadProducts() {
 
   allProducts = await fetch('/api/products?' + params).then(r => r.json());
   renderProducts();
+  updateFilteredStats();
 }
 
 function renderProducts() {
@@ -902,29 +1015,31 @@ function renderProducts() {
     return;
   }
   body.innerHTML = allProducts.map(p => `
-    <tr class="clickable" data-sku="${esc(p.sku)}">
+    <tr class="clickable" data-sku="${esc(p.sku)}" data-region="${esc(p.region || '')}">
       <td><strong>${esc(p.sku)}</strong></td>
       <td>${esc(p.name)}</td>
-      <td class="price">${fmt(p.price_cents)}</td>
+      <td class="price">${fmt(p.price_cents, p.currency)}</td>
       <td>${badge(p.status)}</td>
       <td>${esc(p.category.replace('all-',''))}</td>
     </tr>
   `).join('');
   body.querySelectorAll('tr.clickable').forEach(tr => {
-    tr.addEventListener('click', () => showProductDetail(tr.dataset.sku));
+    tr.addEventListener('click', () => showProductDetail(tr.dataset.sku, tr.dataset.region));
   });
 }
 
 async function loadEvents() {
   const type = $('#filter-event-type').value;
+  const region = $('#filter-event-region').value;
   const params = new URLSearchParams();
   if (type) params.set('type', type);
+  if (region) params.set('region', region);
   params.set('limit', '200');
 
   const events = await fetch('/api/events?' + params).then(r => r.json());
   const body = $('#event-body');
   if (!events.length) {
-    body.innerHTML = '<tr><td colspan="5" class="empty">No events recorded yet. Changes will appear here after subsequent monitor runs.</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="empty">No events recorded yet. Changes will appear here after subsequent monitor runs.</td></tr>';
     return;
   }
   body.innerHTML = events.map(e => {
@@ -939,6 +1054,7 @@ async function loadEvents() {
       <td>${eventBadge(e.event_type)}</td>
       <td><strong>${esc(e.sku)}</strong></td>
       <td>${esc(e.name)}</td>
+      <td>${regionFlag(e.region || '')} ${esc(e.region || '')}</td>
       <td>${change}</td>
     </tr>`;
   }).join('');
@@ -959,12 +1075,16 @@ async function loadCategories() {
 
 async function loadCategoryFilter() {
   const cats = await fetch('/api/categories').then(r => r.json());
-  const sel = $('#filter-category');
-  cats.forEach(c => {
-    const opt = document.createElement('option');
-    opt.value = c.category;
-    opt.textContent = c.category.replace('all-','');
-    sel.appendChild(opt);
+  const selectors = ['#filter-category', '#filter-soldout-category'];
+  selectors.forEach(id => {
+    const sel = $(id);
+    if (!sel) return;
+    cats.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.category;
+      opt.textContent = c.category.replace('all-','');
+      sel.appendChild(opt);
+    });
   });
 }
 
@@ -988,7 +1108,10 @@ $('#filter-status').addEventListener('change', loadProducts);
 $('#filter-category').addEventListener('change', loadProducts);
 $('#filter-region').addEventListener('change', loadProducts);
 $('#filter-event-type').addEventListener('change', loadEvents);
-$('#search-soldout').addEventListener('input', debounce(renderSoldOut, 300));
+$('#filter-event-region').addEventListener('change', loadEvents);
+$('#search-soldout').addEventListener('input', debounce(loadSoldOut, 300));
+$('#filter-soldout-category').addEventListener('change', loadSoldOut);
+$('#filter-soldout-region').addEventListener('change', loadSoldOut);
 
 function debounce(fn, ms) {
   let t;
@@ -996,40 +1119,41 @@ function debounce(fn, ms) {
 }
 
 // Sold out tab
-let allSoldOut = [];
 async function loadSoldOut() {
-  allSoldOut = await fetch('/api/sold-out').then(r => r.json());
-  renderSoldOut();
-}
-function renderSoldOut() {
-  const q = ($('#search-soldout')?.value || '').toLowerCase();
-  const filtered = q ? allSoldOut.filter(p =>
-    p.sku.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q)
-  ) : allSoldOut;
+  const params = new URLSearchParams();
+  const q = ($('#search-soldout')?.value || '');
+  const region = $('#filter-soldout-region').value;
+  const category = $('#filter-soldout-category').value;
+  if (q) params.set('q', q);
+  if (region) params.set('region', region);
+  if (category) params.set('category', category);
+
+  const items = await fetch('/api/sold-out?' + params).then(r => r.json());
   const body = $('#soldout-body');
-  if (!filtered.length) {
+  if (!items.length) {
     body.innerHTML = '<tr><td colspan="5" class="empty">No sold out items found</td></tr>';
     return;
   }
-  body.innerHTML = filtered.map(p => `
-    <tr class="clickable" data-sku="${esc(p.sku)}">
+  body.innerHTML = items.map(p => `
+    <tr class="clickable" data-sku="${esc(p.sku)}" data-region="${esc(p.region || '')}">
       <td><strong>${esc(p.sku)}</strong></td>
       <td>${esc(p.name)}</td>
-      <td class="price">${fmt(p.price_cents)}</td>
+      <td class="price">${fmt(p.price_cents, p.currency)}</td>
       <td>${esc(p.category.replace('all-',''))}</td>
-      <td>${esc(p.subcategory)}</td>
+      <td>${regionFlag(p.region || '')} ${esc(p.region || '')}</td>
     </tr>
   `).join('');
   body.querySelectorAll('tr.clickable').forEach(tr => {
-    tr.addEventListener('click', () => showProductDetail(tr.dataset.sku));
+    tr.addEventListener('click', () => showProductDetail(tr.dataset.sku, tr.dataset.region));
   });
 }
 
 // Product detail modal
-async function showProductDetail(sku) {
+async function showProductDetail(sku, region) {
+  const rp = region ? '&region=' + encodeURIComponent(region) : '';
   const [data, winData] = await Promise.all([
-    fetch('/api/product-history?sku=' + encodeURIComponent(sku)).then(r => r.json()),
-    fetch('/api/availability-windows?sku=' + encodeURIComponent(sku)).then(r => r.json()),
+    fetch('/api/product-history?sku=' + encodeURIComponent(sku) + rp).then(r => r.json()),
+    fetch('/api/availability-windows?sku=' + encodeURIComponent(sku) + rp).then(r => r.json()),
   ]);
   const p = data.product;
   if (!p) return;
@@ -1041,24 +1165,28 @@ async function showProductDetail(sku) {
     ${p.thumbnail ? `<img class="modal-thumb" src="${esc(p.thumbnail)}" alt="${esc(p.name)}">` : ''}
     <h2>${esc(p.name)}</h2>
     <div class="sku-label">${esc(p.sku)} · ${esc(p.category.replace('all-',''))} · ${esc(p.subcategory)}</div>
-    <div class="detail-row"><span>Current Price</span><span class="price">${fmt(p.price_cents)}</span></div>
+    <div class="detail-row"><span>Current Price</span><span class="price">${fmt(p.price_cents, p.currency)}</span></div>
     <div class="detail-row"><span>Status</span><span><span class="status-dot ${statusDot}"></span>${statusLabel}</span></div>
-    <div class="detail-row"><span>Store Link</span><span><a href="https://store.ui.com/us/en/category/${esc(p.category)}/products/${esc(p.slug)}" target="_blank">${esc(p.slug)} &#8599;</a></span></div>
+    <div class="detail-row"><span>Region</span><span>${regionFlag(p.region || 'us/en')} ${esc(p.region || 'us/en')}</span></div>
+    <div class="detail-row"><span>Store Link</span><span><a href="https://store.ui.com/${esc(p.region || 'us/en')}/category/${esc(p.category)}/products/${esc(p.slug)}" target="_blank">${esc(p.slug)} &#8599;</a></span></div>
     <div class="detail-row"><span>First seen</span><span>${fmtDate(p.first_seen)}</span></div>
     <div class="detail-row"><span>Last updated</span><span>${fmtDate(p.last_updated)}</span></div>
   `;
 
-  // Charts
+  // Store modal data for time window re-renders
+  window._modalData = {prices: data.prices, currency: p.currency, windows: winData.windows};
+  window._modalTimeWindow = 'ALL';
+
+  // Time window selector + charts container
   if (data.prices && data.prices.length >= 1) {
-    html += `<div class="section"><h3>Price History</h3>${buildPriceChart(data.prices)}</div>`;
-    html += `<div class="section"><h3>Availability</h3>${buildAvailChart(data.prices)}</div>`;
-    // Availability stats
-    const total = data.prices.length;
-    const avail = data.prices.filter(x => x.status === 'Available').length;
-    const pct = total ? Math.round(avail / total * 100) : 0;
-    html += `<div class="detail-row" style="margin-top:4px"><span>Availability rate</span><span>${pct}% (${avail}/${total} scans)</span></div>`;
+    html += '<div class="section"><div class="tw-bar">';
+    ['1D','3D','1W','1M','6M','1Y','2Y','ALL'].forEach(tw => {
+      const cls = tw === 'ALL' ? ' active' : '';
+      html += '<button class="tw-btn' + cls + '" data-tw="' + tw + '" onclick="setTimeWindow(\\'' + tw + '\\')">' + tw + '</button>';
+    });
+    html += '</div><div id="modal-charts"></div></div>';
   } else {
-    html += `<div class="section"><h3>Price History</h3><div class="empty">Awaiting first scan data</div></div>`;
+    html += '<div class="section"><h3>Price History</h3><div class="empty">Awaiting first scan data</div></div>';
   }
 
   // Availability Windows (in-stock duration tracking)
@@ -1108,7 +1236,41 @@ async function showProductDetail(sku) {
   }
 
   $('#modal-content').innerHTML = html;
+  // Render charts with default time window
+  if (data.prices && data.prices.length >= 1) renderModalCharts('ALL');
   $('#modal-bg').classList.add('open');
+}
+
+function setTimeWindow(tw) {
+  window._modalTimeWindow = tw;
+  document.querySelectorAll('.tw-btn').forEach(b => b.classList.toggle('active', b.dataset.tw === tw));
+  renderModalCharts(tw);
+}
+
+function filterByTimeWindow(prices, tw) {
+  if (tw === 'ALL' || !prices || !prices.length) return prices;
+  const ms = {'1D':86400000,'3D':259200000,'1W':604800000,'1M':2592000000,'6M':15552000000,'1Y':31536000000,'2Y':63072000000};
+  const cutoff = Date.now() - (ms[tw] || 0);
+  const filtered = prices.filter(p => new Date(p.timestamp).getTime() >= cutoff);
+  return filtered.length > 0 ? filtered : prices;
+}
+
+function renderModalCharts(tw) {
+  const d = window._modalData;
+  if (!d || !d.prices) return;
+  const prices = filterByTimeWindow(d.prices, tw);
+  let html = '';
+  html += '<h3 style="font-size:14px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Price History</h3>';
+  html += buildPriceChart(prices, d.currency);
+  html += '<h3 style="font-size:14px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin:20px 0 10px">Availability Timeline</h3>';
+  html += buildAvailTimeline(prices);
+  // Availability stats for filtered window
+  const total = prices.length;
+  const avail = prices.filter(x => x.status === 'Available').length;
+  const pct = total ? Math.round(avail / total * 100) : 0;
+  html += '<div class="detail-row" style="margin-top:4px"><span>Availability rate</span><span>' + pct + '% (' + avail + '/' + total + ' scans)</span></div>';
+  const el = document.getElementById('modal-charts');
+  if (el) el.innerHTML = html;
 }
 
 function fmtDuration(minutes) {
@@ -1175,7 +1337,7 @@ function fmtDate(iso) {
          d.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'});
 }
 
-function buildPriceChart(prices) {
+function buildPriceChart(prices, currency) {
   const W = 1020, H = 200, pad = {t:20, r:20, b:30, l:65};
   const cW = W - pad.l - pad.r;
   const cH = H - pad.t - pad.b;
@@ -1201,7 +1363,7 @@ function buildPriceChart(prices) {
 
   // Y-axis labels
   const yLabels = gridVals.map(v =>
-    `<text class="chart-label" x="${pad.l-8}" y="${y(v).toFixed(1)}" text-anchor="end" dominant-baseline="middle">${fmt(Math.round(v))}</text>`
+    `<text class="chart-label" x="${pad.l-8}" y="${y(v).toFixed(1)}" text-anchor="end" dominant-baseline="middle">${fmt(Math.round(v), currency)}</text>`
   ).join('');
 
   // Price line
@@ -1231,28 +1393,88 @@ function buildPriceChart(prices) {
   return `<div class="chart-area"><svg viewBox="0 0 ${W} ${H}">${grid}${line}${dots}${yLabels}${xLabels}${legend}</svg></div>`;
 }
 
-function buildAvailChart(prices) {
-  const W = 1020, H = 60, pad = {t:5, r:20, b:20, l:65};
+function buildAvailTimeline(prices) {
+  if (!prices || prices.length < 1) return '';
+  const W = 1020, H = 70, pad = {t:8, r:20, b:22, l:65};
   const cW = W - pad.l - pad.r;
   const barH = H - pad.t - pad.b;
-  const n = prices.length;
 
-  // Draw horizontal bars for each scan, colored by status
-  const barW = Math.max(cW / n, 1);
-  const bars = prices.map((p, i) => {
-    const color = p.status === 'Available' ? 'var(--green)' : p.status === 'SoldOut' ? 'var(--red)' : 'var(--yellow)';
-    const bx = pad.l + (i / n) * cW;
-    return `<rect x="${bx.toFixed(1)}" y="${pad.t}" width="${(barW + 0.5).toFixed(1)}" height="${barH}" fill="${color}" opacity="0.8"/>`;
+  // Parse timestamps and get time range
+  const times = prices.map(p => new Date(p.timestamp).getTime());
+  const tMin = Math.min(...times);
+  const tMax = Math.max(...times);
+  const tRange = tMax - tMin || 1;
+  const x = (t) => pad.l + ((t - tMin) / tRange) * cW;
+
+  // Group consecutive same-status scans into segments
+  const segments = [];
+  let seg = {status: prices[0].status, start: times[0], end: times[0]};
+  for (let i = 1; i < prices.length; i++) {
+    if (prices[i].status === seg.status) {
+      seg.end = times[i];
+    } else {
+      segments.push(seg);
+      seg = {status: prices[i].status, start: times[i], end: times[i]};
+    }
+  }
+  segments.push(seg);
+
+  // Fill gaps: extend each segment to midpoint between it and next
+  for (let i = 0; i < segments.length - 1; i++) {
+    const mid = (segments[i].end + segments[i+1].start) / 2;
+    segments[i].end = mid;
+    segments[i+1].start = mid;
+  }
+  if (segments.length > 0) {
+    segments[0].start = tMin;
+    segments[segments.length - 1].end = tMax;
+  }
+
+  // Draw colored bars per segment
+  const statusColor = (s) => s === 'Available' ? 'var(--green)' : s === 'SoldOut' ? 'var(--red)' : s === 'RegionNotAvailable' ? '#7c8ba5' : 'var(--yellow)';
+  const bars = segments.map(s => {
+    const bx = x(s.start);
+    const bw = Math.max(x(s.end) - bx, 2);
+    return '<rect x="' + bx.toFixed(1) + '" y="' + pad.t + '" width="' + bw.toFixed(1) + '" height="' + barH + '" fill="' + statusColor(s.status) + '" opacity="0.85" rx="2"/>';
+  }).join('');
+
+  // Transition markers (thin dark gaps between segments)
+  const markers = segments.slice(1).map(s => {
+    const mx = x(s.start);
+    return '<line x1="' + mx.toFixed(1) + '" y1="' + (pad.t - 1) + '" x2="' + mx.toFixed(1) + '" y2="' + (pad.t + barH + 1) + '" stroke="var(--bg1)" stroke-width="2"/>';
+  }).join('');
+
+  // Duration labels inside segments that are wide enough
+  const durLabels = segments.map(s => {
+    const bx = x(s.start);
+    const bw = x(s.end) - bx;
+    if (bw < 50) return '';
+    const dur = (s.end - s.start) / 60000;
+    const cx = bx + bw / 2;
+    return '<text x="' + cx.toFixed(1) + '" y="' + (pad.t + barH / 2 + 1) + '" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-size="10" font-family="var(--font)" font-weight="600">' + fmtDuration(dur) + '</text>';
   }).join('');
 
   // Label
-  const label = `<text class="chart-label" x="${pad.l-8}" y="${pad.t + barH/2 + 1}" text-anchor="end" dominant-baseline="middle">Status</text>`;
+  const label = '<text class="chart-label" x="' + (pad.l - 8) + '" y="' + (pad.t + barH / 2 + 1) + '" text-anchor="end" dominant-baseline="middle">Status</text>';
 
-  // X-axis
-  const x = (i) => pad.l + (i / (n - 1)) * cW;
-  const xLabels = buildXLabels(prices, x, H);
+  // Time-scaled X-axis labels
+  const count = Math.min(5, Math.max(2, Math.ceil(tRange / (24 * 3600000)) + 1));
+  let xLabels = '';
+  for (let k = 0; k < count; k++) {
+    const t = tMin + (k / (count - 1)) * tRange;
+    const d = new Date(t).toISOString().split('T')[0];
+    const anchor = k === 0 ? 'start' : k === count - 1 ? 'end' : 'middle';
+    xLabels += '<text class="chart-label" x="' + x(t).toFixed(1) + '" y="' + (H - 2) + '" text-anchor="' + anchor + '">' + d + '</text>';
+  }
 
-  return `<div class="chart-area" style="height:80px"><svg viewBox="0 0 ${W} ${H}">${bars}${label}${xLabels}</svg></div>`;
+  // Legend as HTML below chart for readability
+  const legend = '<div style="display:flex;gap:16px;justify-content:center;margin-top:6px;font-size:12px;color:var(--text2)">' +
+    '<span><span style="color:var(--green);font-weight:700">&#9632;</span> Available</span>' +
+    '<span><span style="color:var(--red);font-weight:700">&#9632;</span> Sold Out</span>' +
+    '<span><span style="color:var(--yellow);font-weight:700">&#9632;</span> Coming Soon</span>' +
+    '</div>';
+
+  return '<div class="chart-area" style="height:80px"><svg viewBox="0 0 ' + W + ' ' + H + '">' + bars + markers + durLabels + label + xLabels + '</svg></div>' + legend;
 }
 
 function buildXLabels(prices, xFn, H) {
@@ -1303,10 +1525,10 @@ async function loadWatchlist() {
     return;
   }
   body.innerHTML = items.map(w => `
-    <tr class="clickable" data-sku="${esc(w.sku)}">
+    <tr class="clickable" data-sku="${esc(w.sku)}" data-region="${esc(w.region || 'us/en')}">
       <td><strong>${esc(w.sku)}</strong></td>
       <td>${esc(w.name || '—')}</td>
-      <td class="price">${w.price_cents ? fmt(w.price_cents) : '—'}</td>
+      <td class="price">${w.price_cents ? fmt(w.price_cents, w.currency) : '—'}</td>
       <td>${w.status ? badge(w.status) : '—'}</td>
       <td>${esc((w.category || '').replace('all-',''))}</td>
       <td>${esc(w.notes || '')}</td>
@@ -1315,7 +1537,7 @@ async function loadWatchlist() {
     </tr>
   `).join('');
   body.querySelectorAll('tr.clickable').forEach(tr => {
-    tr.addEventListener('click', () => showProductDetail(tr.dataset.sku));
+    tr.addEventListener('click', () => showProductDetail(tr.dataset.sku, tr.dataset.region));
   });
 }
 
@@ -1328,10 +1550,126 @@ async function removeWatch(sku) {
   loadWatchlist();
 }
 
+let _regionStockData = [];
+const REGION_FLAGS = {us:'🇺🇸',eu:'🇪🇺',uk:'🇬🇧',ca:'🇨🇦',jp:'🇯🇵',mx:'🇲🇽',br:'🇧🇷','in':'🇮🇳',sg:'🇸🇬',me:'🇦🇪',za:'🇿🇦',tw:'🇹🇼',cn:'🇨🇳',ph:'🇵🇭'};
+function regionFlag(region) { const cc = region.split('/')[0]; return REGION_FLAGS[cc] || ''; }
+
+function buildRegionStockChart(regions, mode) {
+  if (!regions.length) return '<div class="empty">No region data</div>';
+  mode = mode || 'all';
+
+  // Compute displayed value per region based on filter
+  const mapped = regions.map(r => {
+    const vals = {};
+    if (mode === 'all') {
+      vals.available = r.available;
+      vals.sold_out = r.sold_out;
+      vals.coming_soon = r.coming_soon;
+      vals.region_na = r.region_na || 0;
+    } else if (mode === 'sold_out') {
+      vals.available = 0; vals.sold_out = r.sold_out; vals.coming_soon = 0; vals.region_na = 0;
+    } else if (mode === 'available') {
+      vals.available = r.available; vals.sold_out = 0; vals.coming_soon = 0; vals.region_na = 0;
+    } else if (mode === 'coming_soon') {
+      vals.available = 0; vals.sold_out = 0; vals.coming_soon = r.coming_soon; vals.region_na = 0;
+    } else if (mode === 'unavailable') {
+      vals.available = 0; vals.sold_out = r.sold_out; vals.coming_soon = r.coming_soon; vals.region_na = r.region_na || 0;
+    }
+    vals.total = vals.available + vals.sold_out + vals.coming_soon + vals.region_na;
+    vals.region = r.region;
+    vals.catalog_total = r.total;
+    return vals;
+  });
+
+  // Sort by the displayed total descending
+  mapped.sort((a, b) => b.total - a.total);
+
+  const maxVal = Math.max(...mapped.map(r => r.total), 1);
+  const barH = 24, gap = 6, labelW = 60, W = 940;
+  const chartH = mapped.length * (barH + gap);
+  const barArea = W - labelW - 50;
+
+  let svg = `<svg viewBox="0 0 ${W} ${chartH + 20}" style="width:100%;height:${chartH + 20}px;display:block;">`;
+
+  mapped.forEach((r, i) => {
+    const y = i * (barH + gap);
+    const scale = barArea / maxVal;
+    const wAvail = r.available * scale;
+    const wSold = r.sold_out * scale;
+    const wSoon = r.coming_soon * scale;
+    const wNA = r.region_na * scale;
+
+    const cc = r.region.split('/')[0];
+    const flag = REGION_FLAGS[cc] || '';
+    svg += `<text x="${labelW - 8}" y="${y + barH / 2 + 1}" text-anchor="end" dominant-baseline="middle" class="chart-label" style="font-size:11px">${flag} ${cc.toUpperCase()}</text>`;
+
+    let xOff = labelW;
+    if (wAvail > 0) {
+      svg += `<rect x="${xOff}" y="${y}" width="${wAvail}" height="${barH}" rx="2" fill="var(--green)" opacity="0.8"/>`;
+      if (wAvail > 20) svg += `<text x="${xOff + wAvail/2}" y="${y + barH/2 + 1}" text-anchor="middle" dominant-baseline="middle" style="fill:#fff;font-size:10px;font-family:var(--font)">${r.available}</text>`;
+      xOff += wAvail;
+    }
+    if (wSold > 0) {
+      svg += `<rect x="${xOff}" y="${y}" width="${wSold}" height="${barH}" rx="2" fill="var(--red)" opacity="0.8"/>`;
+      if (wSold > 16) svg += `<text x="${xOff + wSold/2}" y="${y + barH/2 + 1}" text-anchor="middle" dominant-baseline="middle" style="fill:#fff;font-size:10px;font-family:var(--font)">${r.sold_out}</text>`;
+      xOff += wSold;
+    }
+    if (wSoon > 0) {
+      svg += `<rect x="${xOff}" y="${y}" width="${wSoon}" height="${barH}" rx="2" fill="var(--yellow)" opacity="0.7"/>`;
+      if (wSoon > 16) svg += `<text x="${xOff + wSoon/2}" y="${y + barH/2 + 1}" text-anchor="middle" dominant-baseline="middle" style="fill:#000;font-size:10px;font-family:var(--font)">${r.coming_soon}</text>`;
+      xOff += wSoon;
+    }
+    if (wNA > 0) {
+      svg += `<rect x="${xOff}" y="${y}" width="${wNA}" height="${barH}" rx="2" fill="#7c8ba5" opacity="0.5"/>`;
+      if (wNA > 16) svg += `<text x="${xOff + wNA/2}" y="${y + barH/2 + 1}" text-anchor="middle" dominant-baseline="middle" style="fill:#fff;font-size:10px;font-family:var(--font)">${r.region_na}</text>`;
+      xOff += wNA;
+    }
+
+    const label = mode === 'all' ? r.catalog_total : `${r.total}/${r.catalog_total}`;
+    svg += `<text x="${xOff + 6}" y="${y + barH/2 + 1}" dominant-baseline="middle" class="chart-label" style="font-size:10px">${label}</text>`;
+  });
+
+  // Legend
+  const ly = chartH + 6;
+  const legends = [];
+  if (mode === 'all' || mode === 'available') legends.push({x:0,color:'var(--green)',op:'0.8',label:'Available'});
+  if (mode === 'all' || mode === 'sold_out' || mode === 'unavailable') legends.push({x:0,color:'var(--red)',op:'0.8',label:'Sold Out'});
+  if (mode === 'all' || mode === 'coming_soon' || mode === 'unavailable') legends.push({x:0,color:'var(--yellow)',op:'0.7',label:'Coming Soon'});
+  if (mode === 'all' || mode === 'unavailable') legends.push({x:0,color:'#7c8ba5',op:'0.5',label:'Region N/A'});
+
+  let lx = labelW;
+  legends.forEach(l => {
+    svg += `<circle cx="${lx}" cy="${ly}" r="4" fill="${l.color}" opacity="${l.op}"/><text x="${lx+8}" y="${ly+1}" class="chart-label" dominant-baseline="middle" style="font-size:10px">${l.label}</text>`;
+    lx += l.label.length * 7 + 28;
+  });
+
+  svg += '</svg>';
+  return svg;
+}
+
 // Analytics
 async function loadAnalytics() {
-  const data = await fetch('/api/price-analytics').then(r => r.json());
+  const [data, regionStock] = await Promise.all([
+    fetch('/api/price-analytics').then(r => r.json()),
+    fetch('/api/region-stock').then(r => r.json()),
+  ]);
   let html = '';
+
+  // Region stock breakdown chart
+  _regionStockData = regionStock;
+  html += `<div class="analytics-section full">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <h3 style="margin-bottom:0">Stock Status by Storefront</h3>
+      <select id="region-chart-filter" style="background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:11px;font-family:var(--font)">
+        <option value="all">All Statuses</option>
+        <option value="sold_out">Sold Out Only</option>
+        <option value="available">Available Only</option>
+        <option value="coming_soon">Coming Soon Only</option>
+        <option value="unavailable">Unavailable (Sold Out + Coming Soon + N/A)</option>
+      </select>
+    </div>
+    <div id="region-chart-container">${buildRegionStockChart(regionStock, 'all')}</div>
+  </div>`;
 
   // Avg price by category
   html += '<div class="analytics-section"><h3>Average Price by Category</h3><table>';
@@ -1354,8 +1692,8 @@ async function loadAnalytics() {
       html += `<tr>
         <td><strong>${esc(p.sku)}</strong></td>
         <td>${esc(p.name)}</td>
-        <td class="price">${fmt(p.price_cents)}</td>
-        <td style="text-decoration:line-through;color:var(--text2)">${fmt(p.regular_price_cents)}</td>
+        <td class="price">${fmt(p.price_cents, p.currency)}</td>
+        <td style="text-decoration:line-through;color:var(--text2)">${fmt(p.regular_price_cents, p.currency)}</td>
         <td class="highlight">-${pct}%</td>
       </tr>`;
     });
@@ -1425,6 +1763,14 @@ async function loadAnalytics() {
   html += '</div>';
 
   $('#analytics-content').innerHTML = html;
+
+  // Attach region chart filter listener
+  const chartFilter = $('#region-chart-filter');
+  if (chartFilter) {
+    chartFilter.addEventListener('change', () => {
+      $('#region-chart-container').innerHTML = buildRegionStockChart(_regionStockData, chartFilter.value);
+    });
+  }
 }
 
 // Hot items
@@ -1465,12 +1811,16 @@ setInterval(refreshAll, 60000);
 // Load region filter
 async function loadRegionFilter() {
   const regions = await fetch('/api/regions').then(r => r.json());
-  const sel = $('#filter-region');
-  regions.forEach(r => {
-    const opt = document.createElement('option');
-    opt.value = r.region;
-    opt.textContent = r.region + ' (' + r.currency + ', ' + r.product_count + ')';
-    sel.appendChild(opt);
+  const selectors = ['#filter-region', '#filter-soldout-region', '#filter-event-region'];
+  selectors.forEach(id => {
+    const sel = $(id);
+    if (!sel) return;
+    regions.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.region;
+      opt.textContent = regionFlag(r.region) + ' ' + r.region + ' (' + r.currency + ')';
+      sel.appendChild(opt);
+    });
   });
 }
 
