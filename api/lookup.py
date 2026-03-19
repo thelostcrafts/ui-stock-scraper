@@ -115,7 +115,7 @@ class handler(BaseHTTPRequestHandler):
                         LEFT JOIN products p ON e.sku = p.sku AND e.region = p.region
                         WHERE e.event_type = 'new_product'
                           AND b.batch_size < 10
-                          AND e.timestamp > NOW() - INTERVAL '14 days'
+                          AND e.timestamp::timestamptz > NOW() - INTERVAL '14 days'
                     )
                     SELECT DISTINCT ON (name)
                         name, slug, thumbnail, category, status,
