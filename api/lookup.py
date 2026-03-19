@@ -155,7 +155,7 @@ class handler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(b'{"error": "forbidden"}')
                     return
-                gh_token = os.environ.get('GH_DISPATCH_TOKEN', '')
+                gh_token = os.environ.get('GH_DISPATCH_TOKEN', '').strip()
                 if not gh_token:
                     self._json_response({"error": "no GH_DISPATCH_TOKEN configured"})
                     return
