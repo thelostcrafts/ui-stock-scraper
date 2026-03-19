@@ -22,7 +22,7 @@ class handler(BaseHTTPRequestHandler):
         events_24h = query_db("""
             SELECT event_type, COUNT(*) as count
             FROM events
-            WHERE timestamp > CURRENT_TIMESTAMP - INTERVAL '24 hours'
+            WHERE timestamp::timestamptz > CURRENT_TIMESTAMP - INTERVAL '24 hours'
             GROUP BY event_type
         """)
 

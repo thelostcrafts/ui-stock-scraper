@@ -16,7 +16,7 @@ class handler(BaseHTTPRequestHandler):
                    e.details::json->>'delta_cents' as delta_cents
             FROM events e
             WHERE e.event_type = 'price_change'
-              AND e.timestamp > CURRENT_TIMESTAMP - INTERVAL '7 days'
+              AND e.timestamp::timestamptz > CURRENT_TIMESTAMP - INTERVAL '7 days'
             ORDER BY e.timestamp DESC
         """)
 
@@ -49,7 +49,7 @@ class handler(BaseHTTPRequestHandler):
             SELECT e.sku, e.name, e.old_value, e.new_value, e.timestamp
             FROM events e
             WHERE e.event_type = 'status_change'
-              AND e.timestamp > CURRENT_TIMESTAMP - INTERVAL '7 days'
+              AND e.timestamp::timestamptz > CURRENT_TIMESTAMP - INTERVAL '7 days'
             ORDER BY e.timestamp DESC
         """)
 
