@@ -543,8 +543,8 @@ def scan_region(client: httpx.Client, build_id: str, region: str,
 
         time.sleep(delay)
 
-    # Diff against previous
-    region_prev = {k: v for k, v in prev_products.items()
+    # Diff against previous (use plain sku keys to match all_products)
+    region_prev = {v["sku"]: v for k, v in prev_products.items()
                    if v.get("region", "us/en") == region}
     changes = diff_snapshots(region_prev, all_products) if region_prev else None
 
