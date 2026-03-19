@@ -339,12 +339,22 @@ const $$ = s => document.querySelectorAll(s);
 let currentSort = 'name';
 let allProducts = [];
 
-// Tabs
+// Tabs — refresh data when switching
+const tabLoaders = {
+  'products': () => { loadProducts(); loadStats(); },
+  'sold-out': loadSoldOut,
+  'events': loadEvents,
+  'analytics': loadAnalytics,
+  'watchlist': loadWatchlist,
+  'categories': loadCategories,
+};
 $$('.tab').forEach(t => t.addEventListener('click', () => {
   $$('.tab').forEach(x => x.classList.remove('active'));
   $$('.panel').forEach(x => x.classList.remove('active'));
   t.classList.add('active');
   $(`#${t.dataset.panel}`).classList.add('active');
+  const loader = tabLoaders[t.dataset.panel];
+  if (loader) loader();
 }));
 
 const CURRENCY_SYMBOLS = {
@@ -1381,6 +1391,7 @@ function refreshAll() {
   loadCategories();
   loadWatchlist();
   loadHotItems();
+  loadAnalytics();
 }
 setInterval(refreshAll, 60000);
 
