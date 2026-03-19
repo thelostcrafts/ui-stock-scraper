@@ -529,9 +529,9 @@ def scan_region(client: httpx.Client, build_id: str, region: str,
         if h == prev_hashes.get(hash_key):
             stats["categories_unchanged"] += 1
             log(f"    unchanged (hash {h})")
-            for sku, record in prev_products.items():
+            for key, record in prev_products.items():
                 if record.get("category") == cat and record.get("region", "us/en") == region:
-                    all_products[sku] = record
+                    all_products[record["sku"]] = record
         else:
             records = extract_products(cat_json)
             stats["categories_changed"] += 1
@@ -569,10 +569,10 @@ def main():
     finally:
         conn.close()
 
-    # Build flat dict keyed by SKU string, matching scan_region's expectations
+    # Build flat dict keyed by SKU:region to avoid cross-region overwrites
     prev_products = {}
     for r in prev_rows:
-        prev_products[r['sku']] = dict(r)
+        prev_products[f"{r['sku']}:{r['region']}"] = dict(r)
 
     stats = {
         "requests": 0,
@@ -602,7 +602,9 @@ def main():
             products, hashes, changes, build_id = scan_region(
                 client, build_id, region, prev_hashes, prev_products, stats, backoff
             )
-            combined_products.update(products)
+            # Use composite keys to avoid cross-region overwrites
+            for sku, product in products.items():
+                combined_products[f"{sku}:{region}"] = product
             combined_hashes.update(hashes)
             if changes:
                 combined_changes[region] = changes

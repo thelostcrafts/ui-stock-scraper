@@ -1154,20 +1154,22 @@ watchInput.addEventListener('input', () => {
   _ddActiveIdx = -1;
   if (q.length < 2) { watchDD.classList.remove('open'); return; }
 
-  // Deduplicate by SKU (pick first region match) — use unfiltered product list
+  // Deduplicate by SKU (prefer us/en region) — use unfiltered product list
   const searchList = _allProductsUnfiltered.length ? _allProductsUnfiltered : allProducts;
-  const seen = new Set();
-  const matches = [];
+  const matchMap = new Map();
   for (const p of searchList) {
-    if (seen.has(p.sku)) continue;
     const skuMatch = fuzzyMatch(q, p.sku);
     const nameMatch = fuzzyMatch(q, p.name);
     const best = skuMatch.score >= nameMatch.score ? skuMatch : nameMatch;
-    if (best.match) {
-      seen.add(p.sku);
-      matches.push({...p, score: best.score});
+    if (!best.match) continue;
+    const existing = matchMap.get(p.sku);
+    if (!existing
+        || (p.region === 'us/en' && existing.region !== 'us/en')
+        || (existing.region !== 'us/en' && best.score > existing.score)) {
+      matchMap.set(p.sku, {...p, score: best.score});
     }
   }
+  const matches = Array.from(matchMap.values());
   matches.sort((a, b) => b.score - a.score);
   const top = matches.slice(0, 12);
 
