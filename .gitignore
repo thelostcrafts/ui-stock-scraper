@@ -12,3 +12,5 @@ data/changes/
 data/logs/
 .env
 ui_store_recon_report.json
+.vercel
+.env*.local

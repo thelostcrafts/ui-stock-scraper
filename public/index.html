@@ -1,0 +1,1245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UI Store Inventory</title>
+<style>
+  :root {
+    --bg: #0a0a0a; --bg2: #141414; --bg3: #1e1e1e;
+    --border: #2a2a2a; --text: #e5e5e5; --text2: #999;
+    --green: #22c55e; --red: #ef4444; --yellow: #eab308; --blue: #3b82f6;
+    --font: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); font-size: 13px; }
+  a { color: var(--blue); text-decoration: none; }
+
+  .header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; }
+  .header h1 { font-size: 16px; font-weight: 600; }
+  .header .meta { color: var(--text2); font-size: 12px; margin-left: auto; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; padding: 16px 24px; }
+  .stat { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .stat .label { color: var(--text2); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+  .stat .value.green { color: var(--green); }
+  .stat .value.red { color: var(--red); }
+  .stat .value.yellow { color: var(--yellow); }
+  .filtered-stats { padding-top:0; }
+  .filtered-stats .stat { background:transparent; border:1px dashed var(--border); padding:8px 16px; }
+  .filtered-stats .stat .value { font-size:20px; }
+  .filtered-stats .stat .label { font-size:10px; }
+
+  .tabs { display: flex; gap: 0; padding: 0 24px; border-bottom: 1px solid var(--border); }
+  .tab { padding: 10px 20px; cursor: pointer; color: var(--text2); border-bottom: 2px solid transparent; font-size: 13px; font-family: var(--font); background: none; border-top: none; border-left: none; border-right: none; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--blue); }
+
+  .controls { padding: 12px 24px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .controls input, .controls select {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); padding: 6px 10px; font-family: var(--font); font-size: 12px;
+  }
+  .controls input { width: 260px; }
+
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: 8px 12px; color: var(--text2); font-size: 11px; text-transform: uppercase;
+       letter-spacing: 0.5px; border-bottom: 1px solid var(--border); position: sticky; top: 0;
+       background: var(--bg); cursor: pointer; user-select: none; }
+  th:hover { color: var(--text); }
+  td { padding: 7px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  tr:hover { background: var(--bg2); }
+
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .badge.available { background: #052e16; color: var(--green); }
+  .badge.soldout { background: #2a0a0a; color: var(--red); }
+  .badge.comingsoon { background: #1a1500; color: var(--yellow); }
+  .badge.regionna { background: #1a1a2e; color: #7c8ba5; }
+
+  .event-type { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+  .event-type.status_change { background: #1e1b4b; color: #818cf8; }
+  .event-type.price_change { background: #1a1500; color: var(--yellow); }
+  .event-type.new_product { background: #052e16; color: var(--green); }
+  .event-type.removed_product { background: #2a0a0a; color: var(--red); }
+
+  .arrow { color: var(--text2); }
+  .table-wrap { overflow-x: auto; padding: 0 24px; max-height: calc(100vh - 300px); overflow-y: auto; }
+
+  .cat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; padding: 16px 24px; }
+  .cat-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+  .cat-card h3 { font-size: 12px; font-weight: 600; margin-bottom: 8px; word-break: break-all; }
+  .cat-card .row { display: flex; justify-content: space-between; font-size: 12px; margin: 3px 0; }
+
+  .empty { padding: 40px; text-align: center; color: var(--text2); }
+  .price { font-variant-numeric: tabular-nums; }
+  tr.clickable { cursor: pointer; }
+
+  .modal-bg { display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:100; justify-content:center; align-items:center; }
+  .modal-bg.open { display:flex; }
+  .modal { background:var(--bg2); border:1px solid var(--border); border-radius:12px; width:94%; max-width:1100px;
+           max-height:90vh; overflow-y:auto; padding:32px 40px; }
+  .modal h2 { font-size:22px; margin-bottom:4px; }
+  .modal .sku-label { color:var(--text2); font-size:13px; margin-bottom:20px; }
+  .modal .detail-row { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); font-size:14px; }
+  .modal .section { margin-top:28px; }
+  .modal .section h3 { font-size:14px; color:var(--text2); text-transform:uppercase; letter-spacing:.5px; margin-bottom:10px; }
+  .modal .close-btn { position:absolute; top:16px; right:20px; background:none; border:none; color:var(--text2);
+                      font-size:20px; cursor:pointer; font-family:var(--font); }
+  .modal .close-btn:hover { color:var(--text); }
+  .modal-inner { position:relative; }
+
+  .tw-bar { display:flex; gap:4px; margin-bottom:10px; }
+  .tw-btn { background:var(--bg3); border:1px solid var(--border); color:var(--text2); border-radius:6px; padding:4px 12px;
+            font-family:var(--font); font-size:11px; font-weight:600; cursor:pointer; transition:all .15s; }
+  .tw-btn:hover { border-color:var(--blue); color:var(--text); }
+  .tw-btn.active { background:var(--blue); border-color:var(--blue); color:#fff; }
+
+  .chart-area { width:100%; height:220px; background:var(--bg3); border-radius:8px; padding:16px; margin-top:8px; position:relative; overflow:hidden; }
+  .chart-area svg { width:100%; height:100%; }
+  .chart-line { fill:none; stroke:var(--blue); stroke-width:2; }
+  .chart-dot { fill:var(--blue); }
+  .chart-label { fill:var(--text2); font-size:11px; font-family:var(--font); }
+  .chart-grid { stroke:var(--border); stroke-width:0.5; }
+  .status-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+  .status-dot.avail { background:var(--green); }
+  .status-dot.sold { background:var(--red); }
+  .status-dot.soon { background:var(--yellow); }
+
+  .analytics-grid { padding:16px 24px; display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .analytics-section { background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:16px; }
+  .analytics-section.full { grid-column:1/-1; }
+  .analytics-section h3 { font-size:13px; color:var(--text2); text-transform:uppercase; letter-spacing:.5px; margin-bottom:12px; }
+  .analytics-section table { width:100%; }
+  .analytics-section td { padding:5px 8px; border-bottom:1px solid var(--border); font-size:12px; }
+  .analytics-section .highlight { color:var(--green); font-weight:600; }
+  .analytics-section .drop { color:var(--red); font-weight:600; }
+
+  .auto-refresh { display:inline-flex; align-items:center; gap:6px; margin-left:12px; }
+  .auto-refresh .dot { width:6px; height:6px; border-radius:50%; background:var(--green); animation:pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  .product-thumb { width:48px; height:48px; object-fit:contain; border-radius:4px; background:var(--bg3); vertical-align:middle; }
+  .modal-thumb { width:200px; height:200px; object-fit:contain; border-radius:8px; background:var(--bg3); display:block; margin:0 auto 16px; }
+
+  .remove-btn { background:none; border:1px solid var(--border); color:var(--red); border-radius:4px; padding:2px 8px;
+                font-family:var(--font); font-size:11px; cursor:pointer; }
+  .remove-btn:hover { background:var(--red); color:#fff; }
+
+  .hot-card { flex:0 0 auto; background:var(--bg2); border:1px solid var(--border); border-radius:8px;
+              padding:12px; width:180px; cursor:pointer; transition:border-color .15s; }
+  .hot-card:hover { border-color:var(--blue); }
+  .hot-card img { width:60px; height:60px; object-fit:contain; border-radius:4px; background:var(--bg3);
+                  display:block; margin:0 auto 8px; }
+  .hot-card .hc-name { font-size:11px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:4px; }
+  .hot-card .hc-sku { font-size:10px; color:var(--text2); margin-bottom:6px; }
+  .hot-card .hc-stat { font-size:11px; display:flex; justify-content:space-between; margin:2px 0; }
+  .hot-card .hc-stat .val { font-weight:600; }
+  .hot-card .hc-stat .val.fast { color:var(--red); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>UI Store Inventory</h1>
+  <div class="meta" id="scan-meta">Loading...</div>
+  <div class="auto-refresh"><div class="dot"></div><span style="color:var(--text2);font-size:11px">Auto-refresh</span></div>
+</div>
+
+<div class="stats" id="stats"></div>
+<div class="stats filtered-stats" id="filtered-stats" style="display:none"></div>
+
+<div id="hot-items-section" style="display:none; padding:0 24px 12px;">
+  <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+    <span style="font-size:14px; font-weight:600;">Hot Items</span>
+    <span style="font-size:11px; color:var(--text2);">Products that sell out fastest</span>
+  </div>
+  <div id="hot-items-list" style="display:flex; gap:10px; overflow-x:auto; padding-bottom:8px;"></div>
+</div>
+
+<div class="tabs">
+  <button class="tab active" data-panel="products">Products</button>
+  <button class="tab" data-panel="sold-out">Sold Out</button>
+  <button class="tab" data-panel="events">Events</button>
+  <button class="tab" data-panel="analytics">Analytics</button>
+  <button class="tab" data-panel="watchlist">Watchlist</button>
+  <button class="tab" data-panel="categories">Categories</button>
+</div>
+
+<div id="products" class="panel active">
+  <div class="controls">
+    <input type="text" id="search" placeholder="Search SKU or name...">
+    <select id="filter-status">
+      <option value="">All statuses</option>
+      <option value="Available">Available</option>
+      <option value="SoldOut">Sold Out</option>
+      <option value="ComingSoon">Coming Soon</option>
+      <option value="RegionNotAvailable">Region N/A</option>
+    </select>
+    <select id="filter-category">
+      <option value="">All categories</option>
+    </select>
+    <select id="filter-region">
+      <option value="">All regions</option>
+    </select>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th data-sort="sku">SKU</th>
+          <th data-sort="name">Name</th>
+          <th data-sort="price">Price</th>
+          <th data-sort="status">Status</th>
+          <th data-sort="category">Category</th>
+        </tr>
+      </thead>
+      <tbody id="product-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="events" class="panel">
+  <div class="controls">
+    <select id="filter-event-type">
+      <option value="">All events</option>
+      <option value="status_change">Status Changes</option>
+      <option value="price_change">Price Changes</option>
+      <option value="new_product">New Products</option>
+      <option value="removed_product">Removed Products</option>
+    </select>
+    <select id="filter-event-region" class="region-filter">
+      <option value="">All regions</option>
+    </select>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Type</th>
+          <th>SKU</th>
+          <th>Name</th>
+          <th>Region</th>
+          <th>Change</th>
+        </tr>
+      </thead>
+      <tbody id="event-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="sold-out" class="panel">
+  <div class="controls">
+    <input type="text" id="search-soldout" placeholder="Search sold out items...">
+    <select id="filter-soldout-category" class="category-filter">
+      <option value="">All categories</option>
+    </select>
+    <select id="filter-soldout-region" class="region-filter">
+      <option value="">All regions</option>
+    </select>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>SKU</th>
+          <th>Name</th>
+          <th>Price</th>
+          <th>Category</th>
+          <th>Region</th>
+        </tr>
+      </thead>
+      <tbody id="soldout-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="analytics" class="panel">
+  <div class="analytics-grid" id="analytics-content">
+    <div class="empty">Loading analytics...</div>
+  </div>
+</div>
+
+<div id="watchlist" class="panel">
+  <div class="controls">
+    <input type="text" id="watchlist-sku" placeholder="Enter SKU to watch...">
+    <input type="text" id="watchlist-notes" placeholder="Notes (optional)" style="width:200px">
+    <button id="watchlist-add-btn" style="background:var(--blue);color:#fff;border:none;border-radius:6px;padding:6px 14px;font-family:var(--font);font-size:12px;cursor:pointer;">Add to Watchlist</button>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>SKU</th>
+          <th>Name</th>
+          <th>Price</th>
+          <th>Status</th>
+          <th>Category</th>
+          <th>Notes</th>
+          <th>Added</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="watchlist-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="categories" class="panel">
+  <div class="cat-grid" id="cat-grid"></div>
+</div>
+
+<div class="modal-bg" id="modal-bg">
+  <div class="modal">
+    <div class="modal-inner">
+      <button class="close-btn" id="modal-close">&times;</button>
+      <div id="modal-content"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+
+let currentSort = 'name';
+let allProducts = [];
+
+// Tabs
+$$('.tab').forEach(t => t.addEventListener('click', () => {
+  $$('.tab').forEach(x => x.classList.remove('active'));
+  $$('.panel').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  $(`#${t.dataset.panel}`).classList.add('active');
+}));
+
+const CURRENCY_SYMBOLS = {
+  USD:'$', EUR:'€', GBP:'£', CAD:'CA$', JPY:'¥', MXN:'MX$', BRL:'R$',
+  INR:'₹', SGD:'S$', AED:'د.إ', ZAR:'R', TWD:'NT$', CNY:'¥', PHP:'₱'
+};
+function fmt(cents, currency) {
+  if (currency === 'JPY') return '¥' + Math.round(cents / 100).toLocaleString();
+  const sym = (currency && CURRENCY_SYMBOLS[currency]) || '$';
+  return sym + (cents / 100).toLocaleString('en-US', {minimumFractionDigits: 2});
+}
+
+function badge(status) {
+  const cls = status === 'Available' ? 'available' : status === 'SoldOut' ? 'soldout' : status === 'RegionNotAvailable' ? 'regionna' : 'comingsoon';
+  const label = status === 'SoldOut' ? 'Sold Out' : status === 'ComingSoon' ? 'Coming Soon' : status === 'RegionNotAvailable' ? 'Region N/A' : status;
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+
+function eventBadge(type) {
+  const labels = {status_change:'Status',price_change:'Price',new_product:'New',removed_product:'Removed'};
+  return `<span class="event-type ${type}">${labels[type]||type}</span>`;
+}
+
+function timeAgo(iso) {
+  const d = new Date(iso);
+  const now = new Date();
+  const sec = Math.floor((now - d) / 1000);
+  if (sec < 60) return sec + 's ago';
+  if (sec < 3600) return Math.floor(sec/60) + 'm ago';
+  if (sec < 86400) return Math.floor(sec/3600) + 'h ago';
+  return Math.floor(sec/86400) + 'd ago';
+}
+
+async function loadStats() {
+  const data = await fetch('/api/stats').then(r => r.json());
+  const p = data.products;
+  $('#stats').innerHTML = `
+    <div class="stat"><div class="label">Total SKUs</div><div class="value">${p.total}</div></div>
+    <div class="stat"><div class="label">Available</div><div class="value green">${p.available}</div></div>
+    <div class="stat"><div class="label">Sold Out</div><div class="value red">${p.sold_out}</div></div>
+    <div class="stat"><div class="label">Coming Soon</div><div class="value yellow">${p.coming_soon}</div></div>
+    <div class="stat"><div class="label">Total Events</div><div class="value">${data.total_events}</div></div>
+    <div class="stat"><div class="label">Total Scans</div><div class="value">${data.total_scans}</div></div>
+  `;
+  if (data.last_scan) {
+    $('#scan-meta').textContent = `Last scan: ${timeAgo(data.last_scan.timestamp)} · Build ${data.last_scan.build_id}`;
+  }
+  updateFilteredStats();
+}
+
+function updateFilteredStats() {
+  const region = $('#filter-region').value;
+  const status = $('#filter-status').value;
+  const category = $('#filter-category').value;
+  const el = $('#filtered-stats');
+
+  if (!region && !status && !category) {
+    el.style.display = 'none';
+    return;
+  }
+
+  // Compute from allProducts which reflects current filters
+  const items = allProducts;
+  const total = items.length;
+  const avail = items.filter(p => p.status === 'Available').length;
+  const sold = items.filter(p => p.status === 'SoldOut').length;
+  const soon = items.filter(p => p.status === 'ComingSoon').length;
+  const rna = items.filter(p => p.status === 'RegionNotAvailable').length;
+
+  const filterLabel = [region, status, category ? category.replace('all-','') : ''].filter(Boolean).join(' · ');
+
+  el.style.display = 'grid';
+  el.innerHTML = `
+    <div class="stat"><div class="label">Filtered: ${esc(filterLabel)}</div><div class="value">${total} SKUs</div></div>
+    <div class="stat"><div class="label">Available (filtered)</div><div class="value green">${avail}</div></div>
+    <div class="stat"><div class="label">Sold Out (filtered)</div><div class="value red">${sold}</div></div>
+    <div class="stat"><div class="label">Coming Soon (filtered)</div><div class="value yellow">${soon}</div></div>
+    ${rna ? `<div class="stat"><div class="label">Region N/A</div><div class="value" style="color:#7c8ba5">${rna}</div></div>` : ''}
+  `;
+}
+
+async function loadProducts() {
+  const params = new URLSearchParams();
+  const q = $('#search').value;
+  const status = $('#filter-status').value;
+  const category = $('#filter-category').value;
+  const region = $('#filter-region').value;
+  if (q) params.set('q', q);
+  if (status) params.set('status', status);
+  if (category) params.set('category', category);
+  if (region) params.set('region', region);
+  params.set('sort', currentSort);
+
+  allProducts = await fetch('/api/products?' + params).then(r => r.json());
+  renderProducts();
+  updateFilteredStats();
+}
+
+function renderProducts() {
+  const body = $('#product-body');
+  if (!allProducts.length) {
+    body.innerHTML = '<tr><td colspan="5" class="empty">No products found</td></tr>';
+    return;
+  }
+  body.innerHTML = allProducts.map(p => `
+    <tr class="clickable" data-sku="${esc(p.sku)}" data-region="${esc(p.region || '')}">
+      <td><strong>${esc(p.sku)}</strong></td>
+      <td>${esc(p.name)}</td>
+      <td class="price">${fmt(p.price_cents, p.currency)}</td>
+      <td>${badge(p.status)}</td>
+      <td>${esc(p.category.replace('all-',''))}</td>
+    </tr>
+  `).join('');
+  body.querySelectorAll('tr.clickable').forEach(tr => {
+    tr.addEventListener('click', () => showProductDetail(tr.dataset.sku, tr.dataset.region));
+  });
+}
+
+async function loadEvents() {
+  const type = $('#filter-event-type').value;
+  const region = $('#filter-event-region').value;
+  const params = new URLSearchParams();
+  if (type) params.set('type', type);
+  if (region) params.set('region', region);
+  params.set('limit', '200');
+
+  const events = await fetch('/api/events?' + params).then(r => r.json());
+  const body = $('#event-body');
+  if (!events.length) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">No events recorded yet. Changes will appear here after subsequent monitor runs.</td></tr>';
+    return;
+  }
+  body.innerHTML = events.map(e => {
+    let change = '';
+    if (e.old_value && e.new_value) {
+      change = `${esc(e.old_value)} <span class="arrow">→</span> ${esc(e.new_value)}`;
+    } else if (e.new_value) {
+      change = esc(e.new_value);
+    }
+    return `<tr>
+      <td>${timeAgo(e.timestamp)}</td>
+      <td>${eventBadge(e.event_type)}</td>
+      <td><strong>${esc(e.sku)}</strong></td>
+      <td>${esc(e.name)}</td>
+      <td>${regionFlag(e.region || '')} ${esc(e.region || '')}</td>
+      <td>${change}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadCategories() {
+  const cats = await fetch('/api/categories').then(r => r.json());
+  $('#cat-grid').innerHTML = cats.map(c => `
+    <div class="cat-card">
+      <h3>${esc(c.category.replace('all-',''))}</h3>
+      <div class="row"><span>Total</span><span>${c.total}</span></div>
+      <div class="row"><span style="color:var(--green)">Available</span><span>${c.available}</span></div>
+      <div class="row"><span style="color:var(--red)">Sold Out</span><span>${c.sold_out}</span></div>
+      <div class="row"><span style="color:var(--yellow)">Coming Soon</span><span>${c.coming_soon}</span></div>
+    </div>
+  `).join('');
+}
+
+async function loadCategoryFilter() {
+  const cats = await fetch('/api/categories').then(r => r.json());
+  const selectors = ['#filter-category', '#filter-soldout-category'];
+  selectors.forEach(id => {
+    const sel = $(id);
+    if (!sel) return;
+    cats.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.category;
+      opt.textContent = c.category.replace('all-','');
+      sel.appendChild(opt);
+    });
+  });
+}
+
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// Sort headers
+$$('th[data-sort]').forEach(th => th.addEventListener('click', () => {
+  const sort = th.dataset.sort;
+  currentSort = currentSort === sort ? `-${sort}` : sort;
+  loadProducts();
+}));
+
+// Filters
+$('#search').addEventListener('input', debounce(loadProducts, 300));
+$('#filter-status').addEventListener('change', loadProducts);
+$('#filter-category').addEventListener('change', loadProducts);
+$('#filter-region').addEventListener('change', loadProducts);
+$('#filter-event-type').addEventListener('change', loadEvents);
+$('#filter-event-region').addEventListener('change', loadEvents);
+$('#search-soldout').addEventListener('input', debounce(loadSoldOut, 300));
+$('#filter-soldout-category').addEventListener('change', loadSoldOut);
+$('#filter-soldout-region').addEventListener('change', loadSoldOut);
+
+function debounce(fn, ms) {
+  let t;
+  return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+}
+
+// Sold out tab
+async function loadSoldOut() {
+  const params = new URLSearchParams();
+  const q = ($('#search-soldout')?.value || '');
+  const region = $('#filter-soldout-region').value;
+  const category = $('#filter-soldout-category').value;
+  if (q) params.set('q', q);
+  if (region) params.set('region', region);
+  if (category) params.set('category', category);
+
+  const items = await fetch('/api/sold-out?' + params).then(r => r.json());
+  const body = $('#soldout-body');
+  if (!items.length) {
+    body.innerHTML = '<tr><td colspan="5" class="empty">No sold out items found</td></tr>';
+    return;
+  }
+  body.innerHTML = items.map(p => `
+    <tr class="clickable" data-sku="${esc(p.sku)}" data-region="${esc(p.region || '')}">
+      <td><strong>${esc(p.sku)}</strong></td>
+      <td>${esc(p.name)}</td>
+      <td class="price">${fmt(p.price_cents, p.currency)}</td>
+      <td>${esc(p.category.replace('all-',''))}</td>
+      <td>${regionFlag(p.region || '')} ${esc(p.region || '')}</td>
+    </tr>
+  `).join('');
+  body.querySelectorAll('tr.clickable').forEach(tr => {
+    tr.addEventListener('click', () => showProductDetail(tr.dataset.sku, tr.dataset.region));
+  });
+}
+
+// Product detail modal
+async function showProductDetail(sku, region) {
+  const rp = region ? '&region=' + encodeURIComponent(region) : '';
+  const [data, winData] = await Promise.all([
+    fetch('/api/product-history?sku=' + encodeURIComponent(sku) + rp).then(r => r.json()),
+    fetch('/api/availability-windows?sku=' + encodeURIComponent(sku) + rp).then(r => r.json()),
+  ]);
+  const p = data.product;
+  if (!p) return;
+
+  const statusDot = p.status === 'Available' ? 'avail' : p.status === 'SoldOut' ? 'sold' : p.status === 'RegionNotAvailable' ? 'regionna' : 'soon';
+  const statusLabel = p.status === 'SoldOut' ? 'Sold Out' : p.status === 'ComingSoon' ? 'Coming Soon' : p.status === 'RegionNotAvailable' ? 'Region N/A' : p.status;
+
+  let html = `
+    ${p.thumbnail ? `<img class="modal-thumb" src="${esc(p.thumbnail)}" alt="${esc(p.name)}">` : ''}
+    <h2>${esc(p.name)}</h2>
+    <div class="sku-label">${esc(p.sku)} · ${esc(p.category.replace('all-',''))} · ${esc(p.subcategory)}</div>
+    <div class="detail-row"><span>Current Price</span><span class="price">${fmt(p.price_cents, p.currency)}</span></div>
+    <div class="detail-row"><span>Status</span><span><span class="status-dot ${statusDot}"></span>${statusLabel}</span></div>
+    <div class="detail-row"><span>Region</span><span>${regionFlag(p.region || 'us/en')} ${esc(p.region || 'us/en')}</span></div>
+    <div class="detail-row"><span>Store Link</span><span><a href="https://store.ui.com/${esc(p.region || 'us/en')}/category/${esc(p.category)}/products/${esc(p.slug)}" target="_blank">${esc(p.slug)} &#8599;</a></span></div>
+    <div class="detail-row"><span>First seen</span><span>${fmtDate(p.first_seen)}</span></div>
+    <div class="detail-row"><span>Last updated</span><span>${fmtDate(p.last_updated)}</span></div>
+  `;
+
+  // Store modal data for time window re-renders
+  window._modalData = {prices: data.prices, currency: p.currency, windows: winData.windows};
+  window._modalTimeWindow = 'ALL';
+
+  // Time window selector + charts container
+  if (data.prices && data.prices.length >= 1) {
+    html += '<div class="section"><div class="tw-bar">';
+    ['1D','3D','1W','1M','6M','1Y','2Y','ALL'].forEach(tw => {
+      const cls = tw === 'ALL' ? ' active' : '';
+      html += '<button class="tw-btn' + cls + '" data-tw="' + tw + '" onclick="setTimeWindow(\'' + tw + '\')">' + tw + '</button>';
+    });
+    html += '</div><div id="modal-charts"></div></div>';
+  } else {
+    html += '<div class="section"><h3>Price History</h3><div class="empty">Awaiting first scan data</div></div>';
+  }
+
+  // Availability Windows (in-stock duration tracking)
+  if (winData.windows && winData.windows.length > 1) {
+    html += `<div class="section"><h3>Stock Duration Windows</h3>`;
+    html += buildWindowsChart(winData.windows);
+
+    // Summary stats
+    const s = winData.summary;
+    if (s.available_count > 0) {
+      html += `<div class="detail-row" style="margin-top:8px"><span>In-stock windows</span><span>${s.available_count} times</span></div>`;
+      html += `<div class="detail-row"><span>Avg in-stock duration</span><span>${fmtDuration(s.avg_available_minutes)}</span></div>`;
+      html += `<div class="detail-row"><span>Longest in-stock</span><span>${fmtDuration(s.max_available_minutes)}</span></div>`;
+      html += `<div class="detail-row"><span>Shortest in-stock</span><span>${fmtDuration(s.min_available_minutes)}</span></div>`;
+    }
+    if (s.soldout_count > 0) {
+      html += `<div class="detail-row"><span>Out-of-stock windows</span><span>${s.soldout_count} times</span></div>`;
+      html += `<div class="detail-row"><span>Avg out-of-stock duration</span><span>${fmtDuration(s.avg_soldout_minutes)}</span></div>`;
+    }
+
+    // Individual windows table
+    html += `<div style="margin-top:12px; max-height:200px; overflow-y:auto;"><table style="width:100%">
+      <tr><th style="font-size:11px">Status</th><th style="font-size:11px">Start</th><th style="font-size:11px">End</th><th style="font-size:11px">Duration</th></tr>`;
+    winData.windows.forEach(w => {
+      const color = w.status === 'Available' ? 'var(--green)' : w.status === 'SoldOut' ? 'var(--red)' : 'var(--yellow)';
+      const endLabel = w.end ? fmtDate(w.end) : 'ongoing';
+      html += `<tr>
+        <td style="color:${color};font-weight:600;font-size:12px">${w.status === 'SoldOut' ? 'Out of Stock' : w.status}</td>
+        <td style="font-size:12px">${fmtDate(w.start)}</td>
+        <td style="font-size:12px">${endLabel}</td>
+        <td style="font-size:12px">${w.duration_minutes != null ? fmtDuration(w.duration_minutes) : '—'}</td>
+      </tr>`;
+    });
+    html += `</table></div></div>`;
+  }
+
+  // Events
+  if (data.events && data.events.length) {
+    html += `<div class="section"><h3>Change Log</h3>`;
+    html += data.events.map(e => {
+      let change = '';
+      if (e.old_value && e.new_value) change = `${esc(e.old_value)} → ${esc(e.new_value)}`;
+      else if (e.new_value) change = esc(e.new_value);
+      return `<div class="detail-row"><span>${eventBadge(e.event_type)} ${timeAgo(e.timestamp)}</span><span>${change}</span></div>`;
+    }).join('');
+    html += `</div>`;
+  }
+
+  $('#modal-content').innerHTML = html;
+  // Render charts with default time window
+  if (data.prices && data.prices.length >= 1) renderModalCharts('ALL');
+  $('#modal-bg').classList.add('open');
+}
+
+function setTimeWindow(tw) {
+  window._modalTimeWindow = tw;
+  document.querySelectorAll('.tw-btn').forEach(b => b.classList.toggle('active', b.dataset.tw === tw));
+  renderModalCharts(tw);
+}
+
+function filterByTimeWindow(prices, tw) {
+  if (tw === 'ALL' || !prices || !prices.length) return prices;
+  const ms = {'1D':86400000,'3D':259200000,'1W':604800000,'1M':2592000000,'6M':15552000000,'1Y':31536000000,'2Y':63072000000};
+  const cutoff = Date.now() - (ms[tw] || 0);
+  const filtered = prices.filter(p => new Date(p.timestamp).getTime() >= cutoff);
+  return filtered.length > 0 ? filtered : prices;
+}
+
+function renderModalCharts(tw) {
+  const d = window._modalData;
+  if (!d || !d.prices) return;
+  const prices = filterByTimeWindow(d.prices, tw);
+  let html = '';
+  html += '<h3 style="font-size:14px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Price History</h3>';
+  html += buildPriceChart(prices, d.currency);
+  html += '<h3 style="font-size:14px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin:20px 0 10px">Availability Timeline</h3>';
+  html += buildAvailTimeline(prices);
+  // Availability stats for filtered window
+  const total = prices.length;
+  const avail = prices.filter(x => x.status === 'Available').length;
+  const pct = total ? Math.round(avail / total * 100) : 0;
+  html += '<div class="detail-row" style="margin-top:4px"><span>Availability rate</span><span>' + pct + '% (' + avail + '/' + total + ' scans)</span></div>';
+  const el = document.getElementById('modal-charts');
+  if (el) el.innerHTML = html;
+}
+
+function fmtDuration(minutes) {
+  if (minutes == null) return '—';
+  if (minutes < 60) return Math.round(minutes) + 'm';
+  if (minutes < 1440) return Math.round(minutes / 60 * 10) / 10 + 'h';
+  const days = Math.round(minutes / 1440 * 10) / 10;
+  return days + 'd';
+}
+
+function buildWindowsChart(windows) {
+  if (!windows || windows.length < 2) return '';
+  const W = 1020, H = 80, pad = {t:5, r:20, b:25, l:65};
+  const cW = W - pad.l - pad.r;
+  const barH = H - pad.t - pad.b;
+
+  // Compute time range
+  const starts = windows.map(w => new Date(w.start).getTime());
+  const ends = windows.map(w => w.end ? new Date(w.end).getTime() : Date.now());
+  const tMin = Math.min(...starts);
+  const tMax = Math.max(...ends);
+  const tRange = tMax - tMin || 1;
+
+  const x = (t) => pad.l + ((t - tMin) / tRange) * cW;
+
+  // Draw bars for each window
+  let bars = '';
+  windows.forEach(w => {
+    const t0 = new Date(w.start).getTime();
+    const t1 = w.end ? new Date(w.end).getTime() : Date.now();
+    const color = w.status === 'Available' ? 'var(--green)' : w.status === 'SoldOut' ? 'var(--red)' : 'var(--yellow)';
+    const bx = x(t0);
+    const bw = Math.max(x(t1) - bx, 2);
+    bars += '<rect x="' + bx.toFixed(1) + '" y="' + pad.t + '" width="' + bw.toFixed(1) + '" height="' + barH + '" fill="' + color + '" opacity="0.85"/>';
+    // Duration label inside bar if wide enough
+    if (bw > 40 && w.duration_minutes != null) {
+      const cx = bx + bw / 2;
+      const label = fmtDuration(w.duration_minutes);
+      bars += '<text x="' + cx.toFixed(1) + '" y="' + (pad.t + barH/2 + 1) + '" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-size="10" font-family="var(--font)" font-weight="600">' + label + '</text>';
+    }
+  });
+
+  // Label
+  const label = '<text class="chart-label" x="' + (pad.l-8) + '" y="' + (pad.t + barH/2 + 1) + '" text-anchor="end" dominant-baseline="middle">Status</text>';
+
+  // X-axis dates
+  const dates = [tMin, tMin + tRange * 0.5, tMax];
+  const xLabels = dates.map((t, k) => {
+    const d = new Date(t).toISOString().split('T')[0];
+    const anchor = k === 0 ? 'start' : k === dates.length - 1 ? 'end' : 'middle';
+    return '<text class="chart-label" x="' + x(t).toFixed(1) + '" y="' + (H-2) + '" text-anchor="' + anchor + '">' + d + '</text>';
+  }).join('');
+
+  // Legend
+  const legend = '<text class="chart-label" x="' + (W-pad.r) + '" y="' + (pad.t-1) + '" text-anchor="end"><tspan fill="var(--green)">■ </tspan><tspan>In Stock</tspan><tspan dx="6" fill="var(--red)">■ </tspan><tspan>Out of Stock</tspan><tspan dx="6" fill="var(--yellow)">■ </tspan><tspan>Coming Soon</tspan></text>';
+
+  return '<div class="chart-area" style="height:100px"><svg viewBox="0 0 ' + W + ' ' + H + '">' + bars + label + xLabels + legend + '</svg></div>';
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'}) + ' ' +
+         d.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'});
+}
+
+function buildPriceChart(prices, currency) {
+  const W = 1020, H = 200, pad = {t:20, r:20, b:30, l:65};
+  const cW = W - pad.l - pad.r;
+  const cH = H - pad.t - pad.b;
+  const n = prices.length;
+
+  const vals = prices.map(p => p.price_cents);
+  let minP = Math.min(...vals);
+  let maxP = Math.max(...vals);
+  // Add 5% padding so flat lines don't sit on the edge
+  const margin = Math.max((maxP - minP) * 0.1, maxP * 0.02);
+  minP = Math.max(0, minP - margin);
+  maxP = maxP + margin;
+  const range = maxP - minP || 1;
+
+  const x = (i) => pad.l + (n > 1 ? (i / (n - 1)) * cW : cW / 2);
+  const y = (v) => pad.t + cH - ((v - minP) / range) * cH;
+
+  // Grid lines (3 levels)
+  const gridVals = [minP, minP + range * 0.5, maxP];
+  const grid = gridVals.map(v =>
+    `<line class="chart-grid" x1="${pad.l}" y1="${y(v).toFixed(1)}" x2="${W-pad.r}" y2="${y(v).toFixed(1)}"/>`
+  ).join('');
+
+  // Y-axis labels
+  const yLabels = gridVals.map(v =>
+    `<text class="chart-label" x="${pad.l-8}" y="${y(v).toFixed(1)}" text-anchor="end" dominant-baseline="middle">${fmt(Math.round(v), currency)}</text>`
+  ).join('');
+
+  // Price line
+  const points = prices.map((p, i) => `${x(i).toFixed(1)},${y(p.price_cents).toFixed(1)}`);
+  const line = n > 1
+    ? `<polyline class="chart-line" points="${points.join(' ')}"/>`
+    : '';
+
+  // Dots colored by status
+  const dots = prices.map((p, i) => {
+    const color = p.status === 'Available' ? 'var(--green)' : p.status === 'SoldOut' ? 'var(--red)' : 'var(--yellow)';
+    const r = n <= 50 ? 3.5 : n <= 200 ? 2 : 1.5;
+    return `<circle cx="${x(i).toFixed(1)}" cy="${y(p.price_cents).toFixed(1)}" r="${r}" fill="${color}"/>`;
+  }).join('');
+
+  // X-axis date labels
+  const xLabels = buildXLabels(prices, x, H);
+
+  // Legend
+  const legend = `
+    <text class="chart-label" x="${W-pad.r}" y="${pad.t-3}" text-anchor="end">
+      <tspan fill="var(--green)">● </tspan><tspan>Available</tspan>
+      <tspan dx="8" fill="var(--red)">● </tspan><tspan>Sold Out</tspan>
+      <tspan dx="8" fill="var(--yellow)">● </tspan><tspan>Coming Soon</tspan>
+    </text>`;
+
+  return `<div class="chart-area"><svg viewBox="0 0 ${W} ${H}">${grid}${line}${dots}${yLabels}${xLabels}${legend}</svg></div>`;
+}
+
+function buildAvailTimeline(prices) {
+  if (!prices || prices.length < 1) return '';
+  const W = 1020, H = 70, pad = {t:8, r:20, b:22, l:65};
+  const cW = W - pad.l - pad.r;
+  const barH = H - pad.t - pad.b;
+
+  // Parse timestamps and get time range
+  const times = prices.map(p => new Date(p.timestamp).getTime());
+  const tMin = Math.min(...times);
+  const tMax = Math.max(...times);
+  const tRange = tMax - tMin || 1;
+  const x = (t) => pad.l + ((t - tMin) / tRange) * cW;
+
+  // Group consecutive same-status scans into segments
+  const segments = [];
+  let seg = {status: prices[0].status, start: times[0], end: times[0]};
+  for (let i = 1; i < prices.length; i++) {
+    if (prices[i].status === seg.status) {
+      seg.end = times[i];
+    } else {
+      segments.push(seg);
+      seg = {status: prices[i].status, start: times[i], end: times[i]};
+    }
+  }
+  segments.push(seg);
+
+  // Fill gaps: extend each segment to midpoint between it and next
+  for (let i = 0; i < segments.length - 1; i++) {
+    const mid = (segments[i].end + segments[i+1].start) / 2;
+    segments[i].end = mid;
+    segments[i+1].start = mid;
+  }
+  if (segments.length > 0) {
+    segments[0].start = tMin;
+    segments[segments.length - 1].end = tMax;
+  }
+
+  // Draw colored bars per segment
+  const statusColor = (s) => s === 'Available' ? 'var(--green)' : s === 'SoldOut' ? 'var(--red)' : s === 'RegionNotAvailable' ? '#7c8ba5' : 'var(--yellow)';
+  const bars = segments.map(s => {
+    const bx = x(s.start);
+    const bw = Math.max(x(s.end) - bx, 2);
+    return '<rect x="' + bx.toFixed(1) + '" y="' + pad.t + '" width="' + bw.toFixed(1) + '" height="' + barH + '" fill="' + statusColor(s.status) + '" opacity="0.85" rx="2"/>';
+  }).join('');
+
+  // Transition markers (thin dark gaps between segments)
+  const markers = segments.slice(1).map(s => {
+    const mx = x(s.start);
+    return '<line x1="' + mx.toFixed(1) + '" y1="' + (pad.t - 1) + '" x2="' + mx.toFixed(1) + '" y2="' + (pad.t + barH + 1) + '" stroke="var(--bg1)" stroke-width="2"/>';
+  }).join('');
+
+  // Duration labels inside segments that are wide enough
+  const durLabels = segments.map(s => {
+    const bx = x(s.start);
+    const bw = x(s.end) - bx;
+    if (bw < 50) return '';
+    const dur = (s.end - s.start) / 60000;
+    const cx = bx + bw / 2;
+    return '<text x="' + cx.toFixed(1) + '" y="' + (pad.t + barH / 2 + 1) + '" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-size="10" font-family="var(--font)" font-weight="600">' + fmtDuration(dur) + '</text>';
+  }).join('');
+
+  // Label
+  const label = '<text class="chart-label" x="' + (pad.l - 8) + '" y="' + (pad.t + barH / 2 + 1) + '" text-anchor="end" dominant-baseline="middle">Status</text>';
+
+  // Time-scaled X-axis labels
+  const count = Math.min(5, Math.max(2, Math.ceil(tRange / (24 * 3600000)) + 1));
+  let xLabels = '';
+  for (let k = 0; k < count; k++) {
+    const t = tMin + (k / (count - 1)) * tRange;
+    const d = new Date(t).toISOString().split('T')[0];
+    const anchor = k === 0 ? 'start' : k === count - 1 ? 'end' : 'middle';
+    xLabels += '<text class="chart-label" x="' + x(t).toFixed(1) + '" y="' + (H - 2) + '" text-anchor="' + anchor + '">' + d + '</text>';
+  }
+
+  // Legend as HTML below chart for readability
+  const legend = '<div style="display:flex;gap:16px;justify-content:center;margin-top:6px;font-size:12px;color:var(--text2)">' +
+    '<span><span style="color:var(--green);font-weight:700">&#9632;</span> Available</span>' +
+    '<span><span style="color:var(--red);font-weight:700">&#9632;</span> Sold Out</span>' +
+    '<span><span style="color:var(--yellow);font-weight:700">&#9632;</span> Coming Soon</span>' +
+    '</div>';
+
+  return '<div class="chart-area" style="height:80px"><svg viewBox="0 0 ' + W + ' ' + H + '">' + bars + markers + durLabels + label + xLabels + '</svg></div>' + legend;
+}
+
+function buildXLabels(prices, xFn, H) {
+  const n = prices.length;
+  if (n === 0) return '';
+  if (n === 1) {
+    const d = prices[0].timestamp.split('T')[0];
+    return `<text class="chart-label" x="${xFn(0).toFixed(1)}" y="${H-2}" text-anchor="middle">${d}</text>`;
+  }
+  // Show 3-5 date labels evenly spaced
+  const count = Math.min(5, n);
+  const labels = [];
+  for (let k = 0; k < count; k++) {
+    const i = Math.round(k * (n - 1) / (count - 1));
+    const d = prices[i].timestamp.split('T')[0];
+    const anchor = k === 0 ? 'start' : k === count - 1 ? 'end' : 'middle';
+    labels.push(`<text class="chart-label" x="${xFn(i).toFixed(1)}" y="${H-2}" text-anchor="${anchor}">${d}</text>`);
+  }
+  return labels.join('');
+}
+
+// Modal close
+$('#modal-close').addEventListener('click', () => $('#modal-bg').classList.remove('open'));
+$('#modal-bg').addEventListener('click', (e) => {
+  if (e.target === $('#modal-bg')) $('#modal-bg').classList.remove('open');
+});
+
+// Watchlist
+$('#watchlist-add-btn').addEventListener('click', async () => {
+  const sku = $('#watchlist-sku').value.trim();
+  if (!sku) return;
+  const notes = $('#watchlist-notes').value.trim();
+  await fetch('/api/watchlist', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({sku, notes}),
+  });
+  $('#watchlist-sku').value = '';
+  $('#watchlist-notes').value = '';
+  loadWatchlist();
+});
+
+async function loadWatchlist() {
+  const items = await fetch('/api/watchlist').then(r => r.json());
+  const body = $('#watchlist-body');
+  if (!items.length) {
+    body.innerHTML = '<tr><td colspan="8" class="empty">No items in watchlist. Add SKUs above to track specific products.</td></tr>';
+    return;
+  }
+  body.innerHTML = items.map(w => `
+    <tr class="clickable" data-sku="${esc(w.sku)}" data-region="${esc(w.region || 'us/en')}">
+      <td><strong>${esc(w.sku)}</strong></td>
+      <td>${esc(w.name || '—')}</td>
+      <td class="price">${w.price_cents ? fmt(w.price_cents, w.currency) : '—'}</td>
+      <td>${w.status ? badge(w.status) : '—'}</td>
+      <td>${esc((w.category || '').replace('all-',''))}</td>
+      <td>${esc(w.notes || '')}</td>
+      <td>${timeAgo(w.added_at)}</td>
+      <td><button class="remove-btn" data-sku="${esc(w.sku)}" onclick="event.stopPropagation();removeWatch('${esc(w.sku)}')">Remove</button></td>
+    </tr>
+  `).join('');
+  body.querySelectorAll('tr.clickable').forEach(tr => {
+    tr.addEventListener('click', () => showProductDetail(tr.dataset.sku, tr.dataset.region));
+  });
+}
+
+async function removeWatch(sku) {
+  await fetch('/api/watchlist/remove', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({sku}),
+  });
+  loadWatchlist();
+}
+
+let _regionStockData = [];
+const REGION_FLAGS = {us:'🇺🇸',eu:'🇪🇺',uk:'🇬🇧',ca:'🇨🇦',jp:'🇯🇵',mx:'🇲🇽',br:'🇧🇷','in':'🇮🇳',sg:'🇸🇬',me:'🇦🇪',za:'🇿🇦',tw:'🇹🇼',cn:'🇨🇳',ph:'🇵🇭'};
+function regionFlag(region) { const cc = region.split('/')[0]; return REGION_FLAGS[cc] || ''; }
+
+function buildRegionStockChart(regions, mode) {
+  if (!regions.length) return '<div class="empty">No region data</div>';
+  mode = mode || 'all';
+
+  // Compute displayed value per region based on filter
+  const mapped = regions.map(r => {
+    const vals = {};
+    if (mode === 'all') {
+      vals.available = r.available;
+      vals.sold_out = r.sold_out;
+      vals.coming_soon = r.coming_soon;
+      vals.region_na = r.region_na || 0;
+    } else if (mode === 'sold_out') {
+      vals.available = 0; vals.sold_out = r.sold_out; vals.coming_soon = 0; vals.region_na = 0;
+    } else if (mode === 'available') {
+      vals.available = r.available; vals.sold_out = 0; vals.coming_soon = 0; vals.region_na = 0;
+    } else if (mode === 'coming_soon') {
+      vals.available = 0; vals.sold_out = 0; vals.coming_soon = r.coming_soon; vals.region_na = 0;
+    } else if (mode === 'unavailable') {
+      vals.available = 0; vals.sold_out = r.sold_out; vals.coming_soon = r.coming_soon; vals.region_na = r.region_na || 0;
+    }
+    vals.total = vals.available + vals.sold_out + vals.coming_soon + vals.region_na;
+    vals.region = r.region;
+    vals.catalog_total = r.total;
+    return vals;
+  });
+
+  // Sort by the displayed total descending
+  mapped.sort((a, b) => b.total - a.total);
+
+  const maxVal = Math.max(...mapped.map(r => r.total), 1);
+  const barH = 24, gap = 6, labelW = 60, W = 940;
+  const chartH = mapped.length * (barH + gap);
+  const barArea = W - labelW - 50;
+
+  let svg = `<svg viewBox="0 0 ${W} ${chartH + 20}" style="width:100%;height:${chartH + 20}px;display:block;">`;
+
+  mapped.forEach((r, i) => {
+    const y = i * (barH + gap);
+    const scale = barArea / maxVal;
+    const wAvail = r.available * scale;
+    const wSold = r.sold_out * scale;
+    const wSoon = r.coming_soon * scale;
+    const wNA = r.region_na * scale;
+
+    const cc = r.region.split('/')[0];
+    const flag = REGION_FLAGS[cc] || '';
+    svg += `<text x="${labelW - 8}" y="${y + barH / 2 + 1}" text-anchor="end" dominant-baseline="middle" class="chart-label" style="font-size:11px">${flag} ${cc.toUpperCase()}</text>`;
+
+    let xOff = labelW;
+    if (wAvail > 0) {
+      svg += `<rect x="${xOff}" y="${y}" width="${wAvail}" height="${barH}" rx="2" fill="var(--green)" opacity="0.8"/>`;
+      if (wAvail > 20) svg += `<text x="${xOff + wAvail/2}" y="${y + barH/2 + 1}" text-anchor="middle" dominant-baseline="middle" style="fill:#fff;font-size:10px;font-family:var(--font)">${r.available}</text>`;
+      xOff += wAvail;
+    }
+    if (wSold > 0) {
+      svg += `<rect x="${xOff}" y="${y}" width="${wSold}" height="${barH}" rx="2" fill="var(--red)" opacity="0.8"/>`;
+      if (wSold > 16) svg += `<text x="${xOff + wSold/2}" y="${y + barH/2 + 1}" text-anchor="middle" dominant-baseline="middle" style="fill:#fff;font-size:10px;font-family:var(--font)">${r.sold_out}</text>`;
+      xOff += wSold;
+    }
+    if (wSoon > 0) {
+      svg += `<rect x="${xOff}" y="${y}" width="${wSoon}" height="${barH}" rx="2" fill="var(--yellow)" opacity="0.7"/>`;
+      if (wSoon > 16) svg += `<text x="${xOff + wSoon/2}" y="${y + barH/2 + 1}" text-anchor="middle" dominant-baseline="middle" style="fill:#000;font-size:10px;font-family:var(--font)">${r.coming_soon}</text>`;
+      xOff += wSoon;
+    }
+    if (wNA > 0) {
+      svg += `<rect x="${xOff}" y="${y}" width="${wNA}" height="${barH}" rx="2" fill="#7c8ba5" opacity="0.5"/>`;
+      if (wNA > 16) svg += `<text x="${xOff + wNA/2}" y="${y + barH/2 + 1}" text-anchor="middle" dominant-baseline="middle" style="fill:#fff;font-size:10px;font-family:var(--font)">${r.region_na}</text>`;
+      xOff += wNA;
+    }
+
+    const label = mode === 'all' ? r.catalog_total : `${r.total}/${r.catalog_total}`;
+    svg += `<text x="${xOff + 6}" y="${y + barH/2 + 1}" dominant-baseline="middle" class="chart-label" style="font-size:10px">${label}</text>`;
+  });
+
+  // Legend
+  const ly = chartH + 6;
+  const legends = [];
+  if (mode === 'all' || mode === 'available') legends.push({x:0,color:'var(--green)',op:'0.8',label:'Available'});
+  if (mode === 'all' || mode === 'sold_out' || mode === 'unavailable') legends.push({x:0,color:'var(--red)',op:'0.8',label:'Sold Out'});
+  if (mode === 'all' || mode === 'coming_soon' || mode === 'unavailable') legends.push({x:0,color:'var(--yellow)',op:'0.7',label:'Coming Soon'});
+  if (mode === 'all' || mode === 'unavailable') legends.push({x:0,color:'#7c8ba5',op:'0.5',label:'Region N/A'});
+
+  let lx = labelW;
+  legends.forEach(l => {
+    svg += `<circle cx="${lx}" cy="${ly}" r="4" fill="${l.color}" opacity="${l.op}"/><text x="${lx+8}" y="${ly+1}" class="chart-label" dominant-baseline="middle" style="font-size:10px">${l.label}</text>`;
+    lx += l.label.length * 7 + 28;
+  });
+
+  svg += '</svg>';
+  return svg;
+}
+
+// Analytics
+async function loadAnalytics() {
+  const [data, regionStock] = await Promise.all([
+    fetch('/api/price-analytics').then(r => r.json()),
+    fetch('/api/region-stock').then(r => r.json()),
+  ]);
+  let html = '';
+
+  // Region stock breakdown chart
+  _regionStockData = regionStock;
+  html += `<div class="analytics-section full">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <h3 style="margin-bottom:0">Stock Status by Storefront</h3>
+      <select id="region-chart-filter" style="background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:11px;font-family:var(--font)">
+        <option value="all">All Statuses</option>
+        <option value="sold_out">Sold Out Only</option>
+        <option value="available">Available Only</option>
+        <option value="coming_soon">Coming Soon Only</option>
+        <option value="unavailable">Unavailable (Sold Out + Coming Soon + N/A)</option>
+      </select>
+    </div>
+    <div id="region-chart-container">${buildRegionStockChart(regionStock, 'all')}</div>
+  </div>`;
+
+  // Avg price by category
+  html += '<div class="analytics-section"><h3>Average Price by Category</h3><table>';
+  data.avg_by_category.forEach(c => {
+    html += `<tr>
+      <td>${esc(c.category.replace('all-',''))}</td>
+      <td class="price">${fmt(c.avg_price)} avg</td>
+      <td class="price">${fmt(c.min_price)} – ${fmt(c.max_price)}</td>
+      <td>${c.count} SKUs</td>
+    </tr>`;
+  });
+  html += '</table></div>';
+
+  // On sale
+  html += '<div class="analytics-section"><h3>Currently On Sale</h3>';
+  if (data.on_sale.length) {
+    html += '<table>';
+    data.on_sale.forEach(p => {
+      const pct = Math.round(p.savings_cents / p.regular_price_cents * 100);
+      html += `<tr>
+        <td><strong>${esc(p.sku)}</strong></td>
+        <td>${esc(p.name)}</td>
+        <td class="price">${fmt(p.price_cents, p.currency)}</td>
+        <td style="text-decoration:line-through;color:var(--text2)">${fmt(p.regular_price_cents, p.currency)}</td>
+        <td class="highlight">-${pct}%</td>
+      </tr>`;
+    });
+    html += '</table>';
+  } else {
+    html += '<div class="empty">No products currently on sale</div>';
+  }
+  html += '</div>';
+
+  // Recent price changes (7d)
+  html += '<div class="analytics-section full"><h3>Price Changes (Last 7 Days)</h3>';
+  if (data.recent_price_changes.length) {
+    html += '<table>';
+    data.recent_price_changes.forEach(c => {
+      const cls = (c.delta_cents && c.delta_cents < 0) ? 'highlight' : 'drop';
+      const arrow = (c.delta_cents && c.delta_cents < 0) ? '↓' : '↑';
+      html += `<tr>
+        <td>${timeAgo(c.timestamp)}</td>
+        <td><strong>${esc(c.sku)}</strong></td>
+        <td>${esc(c.name)}</td>
+        <td>${esc(c.old_value)} → ${esc(c.new_value)}</td>
+        <td class="${cls}">${arrow} ${c.delta_cents ? fmt(Math.abs(c.delta_cents)) : ''}</td>
+      </tr>`;
+    });
+    html += '</table>';
+  } else {
+    html += '<div class="empty">No price changes in the last 7 days</div>';
+  }
+  html += '</div>';
+
+  // Biggest drops all time
+  html += '<div class="analytics-section full"><h3>Biggest Price Drops (All Time)</h3>';
+  if (data.biggest_drops.length) {
+    html += '<table>';
+    data.biggest_drops.forEach(c => {
+      html += `<tr>
+        <td>${timeAgo(c.timestamp)}</td>
+        <td><strong>${esc(c.sku)}</strong></td>
+        <td>${esc(c.name)}</td>
+        <td>${esc(c.old_value)} → ${esc(c.new_value)}</td>
+        <td class="highlight">↓ ${c.delta_cents ? fmt(Math.abs(c.delta_cents)) : ''}</td>
+      </tr>`;
+    });
+    html += '</table>';
+  } else {
+    html += '<div class="empty">No price drops recorded yet</div>';
+  }
+  html += '</div>';
+
+  // Status changes (7d)
+  html += '<div class="analytics-section full"><h3>Stock Status Changes (Last 7 Days)</h3>';
+  if (data.recent_status_changes.length) {
+    html += '<table>';
+    data.recent_status_changes.forEach(c => {
+      const cls = c.new_value === 'Available' ? 'highlight' : 'drop';
+      html += `<tr>
+        <td>${timeAgo(c.timestamp)}</td>
+        <td><strong>${esc(c.sku)}</strong></td>
+        <td>${esc(c.name)}</td>
+        <td>${badge(c.old_value)} <span class="arrow">→</span> ${badge(c.new_value)}</td>
+      </tr>`;
+    });
+    html += '</table>';
+  } else {
+    html += '<div class="empty">No status changes in the last 7 days</div>';
+  }
+  html += '</div>';
+
+  $('#analytics-content').innerHTML = html;
+
+  // Attach region chart filter listener
+  const chartFilter = $('#region-chart-filter');
+  if (chartFilter) {
+    chartFilter.addEventListener('change', () => {
+      $('#region-chart-container').innerHTML = buildRegionStockChart(_regionStockData, chartFilter.value);
+    });
+  }
+}
+
+// Hot items
+async function loadHotItems() {
+  const items = await fetch('/api/hot-items').then(r => r.json());
+  const section = $('#hot-items-section');
+  const list = $('#hot-items-list');
+  if (!items.length) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = 'block';
+  list.innerHTML = items.map(h => {
+    const statusDot = h.current_status === 'Available' ? 'avail' : h.current_status === 'SoldOut' ? 'sold' : 'soon';
+    return `<div class="hot-card" data-sku="${esc(h.sku)}" onclick="showProductDetail('${esc(h.sku)}')">
+      ${h.thumbnail ? `<img src="${esc(h.thumbnail)}" alt="${esc(h.name)}">` : ''}
+      <div class="hc-name" title="${esc(h.name)}">${esc(h.name)}</div>
+      <div class="hc-sku">${esc(h.sku)} · <span class="status-dot ${statusDot}"></span></div>
+      <div class="hc-stat"><span>Avg in-stock</span><span class="val fast">${fmtDuration(h.avg_instock_minutes)}</span></div>
+      <div class="hc-stat"><span>Shortest</span><span class="val fast">${fmtDuration(h.min_instock_minutes)}</span></div>
+      <div class="hc-stat"><span>Transitions</span><span class="val">${h.total_transitions}</span></div>
+    </div>`;
+  }).join('');
+}
+
+// Auto-refresh every 60 seconds
+function refreshAll() {
+  loadStats();
+  loadProducts();
+  loadEvents();
+  loadSoldOut();
+  loadCategories();
+  loadWatchlist();
+  loadHotItems();
+}
+setInterval(refreshAll, 60000);
+
+// Load region filter
+async function loadRegionFilter() {
+  const regions = await fetch('/api/regions').then(r => r.json());
+  const selectors = ['#filter-region', '#filter-soldout-region', '#filter-event-region'];
+  selectors.forEach(id => {
+    const sel = $(id);
+    if (!sel) return;
+    regions.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.region;
+      opt.textContent = regionFlag(r.region) + ' ' + r.region + ' (' + r.currency + ')';
+      sel.appendChild(opt);
+    });
+  });
+}
+
+// Init
+loadStats();
+loadProducts();
+loadEvents();
+loadSoldOut();
+loadCategories();
+loadCategoryFilter();
+loadRegionFilter();
+loadWatchlist();
+loadAnalytics();
+loadHotItems();
+</script>
+</body>
+</html>

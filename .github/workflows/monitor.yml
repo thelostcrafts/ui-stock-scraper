@@ -1,0 +1,29 @@
+name: UI Store Monitor
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install httpx psycopg2-binary
+
+      - name: Run monitor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # 13 regions (ph/en excluded - returns 0 products)
+          UI_REGIONS: us/en,eu/en,uk/en,ca/en,jp/ja,mx/es,br/pt,in/en,sg/en,me/en,za/en,tw/en,cn/en
+        run: python monitor_cloud.py

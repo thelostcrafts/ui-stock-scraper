@@ -1,0 +1,17 @@
+{
+  "buildCommand": "",
+  "outputDirectory": "public",
+  "functions": {
+    "api/**/*.py": {
+      "runtime": "@vercel/python@4.5.0"
+    }
+  },
+  "rewrites": [
+    { "source": "/api/categories", "destination": "/api/lookup?endpoint=categories" },
+    { "source": "/api/regions", "destination": "/api/lookup?endpoint=regions" },
+    { "source": "/api/region-stock", "destination": "/api/lookup?endpoint=region-stock" },
+    { "source": "/api/scans", "destination": "/api/lookup?endpoint=scans" },
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
