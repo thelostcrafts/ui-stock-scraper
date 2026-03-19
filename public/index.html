@@ -1388,15 +1388,9 @@ async function loadHotItems() {
 }
 
 // Auto-refresh every 60 seconds
-function refreshAll() {
-  loadStats();
-  loadProducts();
-  loadEvents();
-  loadSoldOut();
-  loadCategories();
-  loadWatchlist();
-  loadHotItems();
-  loadAnalytics();
+async function refreshAll() {
+  const loaders = [loadStats, loadProducts, loadEvents, loadSoldOut, loadCategories, loadWatchlist, loadHotItems, loadAnalytics];
+  await Promise.allSettled(loaders.map(fn => fn().catch(() => {})));
 }
 setInterval(refreshAll, 60000);
 
