@@ -179,19 +179,40 @@ def db_record_events(conn, changes: dict, region: str, now: str):
 
 
 def db_record_prices(conn, products: dict, region: str, now: str):
-    """Record price + status snapshot for every SKU (time-series data)."""
+    """Record price + status only when they change from the last recorded values."""
     if not products:
         return
-    rows = [
-        (now, p["sku"], region, p["price_cents"], p["status"])
-        for p in products.values()
-    ]
-    with conn.cursor() as cur:
-        psycopg2.extras.execute_values(cur, """
-            INSERT INTO price_history (timestamp, sku, region, price_cents, status)
-            VALUES %s
-        """, rows, page_size=500)
-    conn.commit()
+
+    skus = [p["sku"] for p in products.values()]
+    if not skus:
+        return
+
+    # Fetch most recent price_history entry per SKU for this region
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("""
+            SELECT DISTINCT ON (sku) sku, price_cents, status
+            FROM price_history
+            WHERE region = %s
+            ORDER BY sku, timestamp DESC
+        """, (region,))
+        prev_prices = {r["sku"]: r for r in cur.fetchall()}
+
+    rows = []
+    for p in products.values():
+        prev = prev_prices.get(p["sku"])
+        if prev is None or prev["price_cents"] != p["price_cents"] or prev["status"] != p["status"]:
+            rows.append((now, p["sku"], region, p["price_cents"], p["status"]))
+
+    if rows:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, """
+                INSERT INTO price_history (timestamp, sku, region, price_cents, status)
+                VALUES %s
+            """, rows, page_size=500)
+        conn.commit()
+        log(f"    price_history: {len(rows)} changes recorded (of {len(products)} SKUs)")
+    else:
+        log(f"    price_history: no changes (all {len(products)} SKUs unchanged)")
 
 
 def db_record_scan(conn, now: str, build_id: str,
